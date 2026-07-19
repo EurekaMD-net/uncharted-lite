@@ -135,6 +135,14 @@ Dev: `npm run dev` (BFF) + `cd web && npm run dev` (Vite on 5173, proxies `/api`
 - **Explore's AGEB view covers a muni's top-100 AGEBs by population** —
   upstream's per-request cap. Smaller zones surface via the colonia
   fallback and Validate.
+- **Zone labels are DENUE free text.** Cancún surfaces zones named "41"
+  etc. — real (its colonias are numbered supermanzanas) but reads broken as
+  a bare label. A per-metro label rule ("Supermanzana 41") is deliberately
+  NOT generalized: numeric colonia names elsewhere aren't supermanzanas.
+- **Cold Explore latency ~5–10s per municipio+giro** (AGEB fan-out on an
+  empty cache; 1h TTL after). National readiness sweep 2026-07-19: colonia
+  pickers populated in all 8 sampled metros (68–200 entries), Explore
+  returned 12 AGEB-grain zones in all 4 sampled cities.
 
 ## Phase 2 backend dependency: `/resolve/ageb`
 
