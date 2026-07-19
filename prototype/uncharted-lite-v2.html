@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="es-MX">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Uncharted — ¿Dónde abro mi negocio?</title>
+<meta name="description" content="Averigua si el local te conviene antes de firmar la renta. Datos del DENUE/INEGI traducidos a un veredicto claro.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700;12..96,800&family=Figtree:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#F1EEE4;
+    --paper-2:#FBFAF5;
+    --ink:#1B211C;
+    --ink-soft:#586159;
+    --jade:#1F6B4F;
+    --jade-bright:#2E9B6E;
+    --amber:#C98A1E;
+    --brick:#A6383C;
+    --line:#DED9CB;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0;background:var(--paper);color:var(--ink);
+    font-family:'Figtree',system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .display{font-family:'Bricolage Grotesque',sans-serif;letter-spacing:-.02em;line-height:1.02}
+  .mono{font-family:'Space Mono',monospace}
+  .wrap{max-width:940px;margin:0 auto;padding:0 20px}
+  .card{background:var(--paper-2);border:1px solid var(--line);border-radius:18px}
+  button{font-family:inherit;cursor:pointer}
+  .btn-primary{
+    background:var(--jade);color:#F7FBF8;border:none;border-radius:12px;
+    padding:14px 22px;font-weight:600;font-size:16px;transition:transform .12s ease,background .15s ease;
+  }
+  .btn-primary:hover{background:#185a41;transform:translateY(-1px)}
+  .btn-ghost{
+    background:transparent;color:var(--ink);border:1px solid var(--line);border-radius:12px;
+    padding:12px 18px;font-weight:600;font-size:15px;transition:border-color .15s ease,background .15s ease;
+  }
+  .btn-ghost:hover{border-color:var(--jade);background:#F4F7F2}
+  :focus-visible{outline:2.5px solid var(--jade);outline-offset:3px;border-radius:6px}
+  .eyebrow{font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--jade)}
+  .pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:5px 11px;border-radius:999px;border:1px solid var(--line);background:var(--paper);color:var(--ink-soft)}
+  .fade{animation:fade .4s ease}
+  @keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  h1[tabindex],h2[tabindex]{outline:none}
+  select{
+    font-family:inherit;font-size:16px;padding:13px 14px;border-radius:12px;border:1px solid var(--line);
+    background:var(--paper-2) url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23586159' stroke-width='2.5'><path d='M6 9l6 6 6-6'/></svg>") no-repeat right 14px center;
+    -webkit-appearance:none;appearance:none;width:100%;color:var(--ink);
+  }
+  select:disabled{opacity:.45;cursor:not-allowed}
+  label.field{display:block;font-size:13px;font-weight:700;margin:0 0 8px;color:var(--ink-soft)}
+  .choice{
+    text-align:left;width:100%;background:var(--paper-2);border:1.5px solid var(--line);border-radius:16px;
+    padding:22px;transition:border-color .15s ease,transform .12s ease,box-shadow .15s ease;
+  }
+  .choice:hover{border-color:var(--jade);transform:translateY(-2px);box-shadow:0 8px 24px -12px rgba(31,107,79,.35)}
+  /* semáforo */
+  .semaforo{display:flex;flex-direction:column;gap:9px;padding:14px 12px;background:#20241f;border-radius:16px;width:64px;align-items:center;flex:none}
+  .luz{width:34px;height:34px;border-radius:50%;background:#3a3f39;opacity:.28;transition:opacity .3s ease}
+  .luz.on{opacity:1}
+  .luz.verde.on{background:var(--jade-bright);box-shadow:0 0 18px 2px rgba(46,155,110,.7)}
+  .luz.amber.on{background:var(--amber);box-shadow:0 0 18px 2px rgba(201,138,30,.65)}
+  .luz.roja.on{background:var(--brick);box-shadow:0 0 18px 2px rgba(166,56,60,.6)}
+  .bar-track{height:9px;background:var(--paper);border-radius:999px;overflow:hidden;border:1px solid var(--line)}
+  .bar-fill{height:100%;border-radius:999px;transition:width .6s cubic-bezier(.2,.8,.2,1)}
+  .locked{filter:blur(6px);user-select:none;opacity:.55;min-height:280px}
+  .rank-num{font-family:'Space Mono',monospace;font-size:13px;font-weight:700;color:var(--ink-soft);flex:none}
+  .rank-row{padding:16px 18px;display:flex;align-items:center;gap:16px;text-align:left;cursor:pointer;width:100%}
+  .rank-row.top{border-color:var(--jade);border-width:1.5px}
+  .rank-score{width:150px;flex:none}
+  .badge-libre{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--amber);border:1px solid var(--amber);border-radius:999px;padding:2px 8px;margin-left:8px;vertical-align:2px}
+  .factor{display:grid;gap:7px}
+  .factor .head{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+  .factor .name{font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--jade)}
+  .factor .grain{font-size:11px;color:var(--ink-soft);font-weight:600}
+  details.como{border:1px solid var(--line);border-radius:12px;padding:12px 16px;font-size:13.5px;color:var(--ink-soft);line-height:1.55}
+  details.como summary{cursor:pointer;font-weight:700;color:var(--ink);font-size:13.5px}
+  details.como[open] summary{margin-bottom:8px}
+  .aviso{background:var(--paper);border-radius:12px;padding:14px 16px;font-size:13px;color:var(--ink-soft);line-height:1.5}
+  /* responsive */
+  @media (max-width:640px){
+    #paths{grid-template-columns:1fr!important}
+    .rank-row{flex-wrap:wrap;gap:10px 14px}
+    .rank-score{width:100%}
+    .semaforo{width:56px;padding:12px 10px}
+    .luz{width:28px;height:28px}
+  }
+  /* print = the demo "PDF" */
+  @media print{
+    body{background:#fff}
+    .no-print{display:none!important}
+    .card{border-color:#bbb}
+    .locked{filter:none;opacity:1}
+  }
+  @media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+
+<!-- ===== HEADER ===== -->
+<header class="wrap" style="padding-top:26px;padding-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+  <div style="display:flex;align-items:center;gap:11px">
+    <div style="width:34px;height:34px;border-radius:9px;background:var(--jade);display:flex;align-items:center;justify-content:center" aria-hidden="true">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F7FBF8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 20l-5.5 2.5V6L9 3.5m0 16.5l6-2.5m-6 2.5V3.5m6 14l5.5 2.5V6L15 3.5m0 14V3.5m-6 0l6 2.5"/></svg>
+    </div>
+    <div>
+      <div class="display" style="font-weight:800;font-size:19px">Uncharted</div>
+      <div style="font-size:11px;color:var(--ink-soft);margin-top:-2px">por EurekaMS</div>
+    </div>
+  </div>
+  <span class="pill no-print" title="Este prototipo usa datos de ejemplo de Guadalajara">● Datos de demostración</span>
+</header>
+
+<main id="app" class="wrap" style="padding-bottom:80px"></main>
+
+<footer class="wrap" style="padding:26px 20px 44px;border-top:1px solid var(--line);color:var(--ink-soft);font-size:12.5px;line-height:1.6">
+  Uncharted te orienta con datos del DENUE/INEGI y fuentes públicas. <strong style="color:var(--ink)">No es una garantía</strong>: los datos tienen margen de error y la decisión final es tuya. Prototipo — datos de ejemplo.
+</footer>
+
+<script>
+/* ============================================================
+   DATOS DEMO — con la FORMA de la API real (uncharted.eurekamd.cloud
+   detrás del BFF de Lite). Cada zona trae los campos que el BFF
+   cocinará desde /analytics/opportunity-by-* + /analytics/municipios
+   + /analytics/risk-summary: conteo de competidores del giro
+   (target_count), actividad total (total_estab), gente (población /
+   flujo), poder de compra (CONEVAL/ENIGH) y riesgo (SESNSP).
+   Cambiar estos objetos por fetch() al BFF es un reemplazo directo.
+   ============================================================ */
+const GIROS = {
+  farmacia:   {label:'Farmacia',            emoji:'💊', precio:349, pesoPoder:.60, tolerancia:5},
+  abarrotes:  {label:'Tiendita / Abarrotes',emoji:'🛒', precio:199, pesoPoder:.35, tolerancia:12},
+  ferreteria: {label:'Ferretería',          emoji:'🔧', precio:299, pesoPoder:.45, tolerancia:4},
+  papeleria:  {label:'Papelería',           emoji:'✏️', precio:199, pesoPoder:.40, tolerancia:5},
+  cafe:       {label:'Cafetería',           emoji:'☕', precio:249, pesoPoder:.60, tolerancia:9},
+  estetica:   {label:'Estética / Salón',    emoji:'💈', precio:199, pesoPoder:.50, tolerancia:8},
+};
+
+/* Cascada geográfica real: Estado → Municipio → Colonia.
+   Claves reales de INEGI (entidad 2 dígitos, municipio 5). Solo
+   Guadalajara está activa en el demo; el resto queda "próximamente". */
+const ESTADOS = [
+  {clave:'14', nombre:'Jalisco',          activo:true},
+  {clave:'09', nombre:'Ciudad de México', activo:false},
+  {clave:'19', nombre:'Nuevo León',       activo:false},
+  {clave:'21', nombre:'Puebla',           activo:false},
+  {clave:'15', nombre:'Estado de México', activo:false},
+];
+const MUNICIPIOS = {
+  '14': [
+    {cve:'14039', nombre:'Guadalajara', activo:true},
+    {cve:'14120', nombre:'Zapopan',     activo:false},
+    {cve:'14098', nombre:'Tlaquepaque', activo:false},
+    {cve:'14101', nombre:'Tonalá',      activo:false},
+  ],
+};
+
+/* gente: proxy de población flotante/residente · poder: 1-5 (CONEVAL/ENIGH)
+   riesgo: incidencia relativa de la zona (SESNSP) · total: actividad total */
+const ZONAS = {
+  '14039': [
+    {id:'americana',  nombre:'Americana',        gente:'Alta',  poder:4, riesgo:'Medio', total:1420, comp:{farmacia:5,abarrotes:12,ferreteria:2,papeleria:4,cafe:14,estetica:9}},
+    {id:'providencia',nombre:'Providencia',      gente:'Media', poder:5, riesgo:'Bajo',  total:1180, comp:{farmacia:6,abarrotes:7, ferreteria:1,papeleria:3,cafe:10,estetica:8}},
+    {id:'oblatos',    nombre:'Oblatos',          gente:'Alta',  poder:2, riesgo:'Alto',  total:1660, comp:{farmacia:9,abarrotes:18,ferreteria:6,papeleria:5,cafe:2, estetica:11}},
+    {id:'santatere',  nombre:'Santa Tere',       gente:'Alta',  poder:3, riesgo:'Medio', total:1510, comp:{farmacia:7,abarrotes:14,ferreteria:4,papeleria:6,cafe:6, estetica:10}},
+    {id:'chapalita',  nombre:'Chapalita',        gente:'Media', poder:4, riesgo:'Bajo',  total:940,  comp:{farmacia:4,abarrotes:8, ferreteria:2,papeleria:4,cafe:7, estetica:6}},
+    {id:'delfresno',  nombre:'Del Fresno',       gente:'Media', poder:3, riesgo:'Medio', total:760,  comp:{farmacia:3,abarrotes:9, ferreteria:1,papeleria:2,cafe:3, estetica:5}},
+    {id:'sanandres',  nombre:'San Andrés',       gente:'Alta',  poder:2, riesgo:'Alto',  total:1230, comp:{farmacia:8,abarrotes:16,ferreteria:5,papeleria:4,cafe:1, estetica:9}},
+    {id:'ladera',     nombre:'Lomas del Paraíso',gente:'Baja',  poder:2, riesgo:'Medio', total:410,  comp:{farmacia:2,abarrotes:5, ferreteria:0,papeleria:1,cafe:0, estetica:2}},
+  ],
+};
+
+/* ============================================================
+   MOTOR DE VEREDICTO (demo)
+   En producción esto vive en el BFF — el cliente solo pinta.
+   Mejoras sobre el motor v1:
+   - saturación relativa a lo que cada giro aguanta (tolerancia),
+     no un peso fijo por competidor;
+   - el poder de compra pesa distinto por giro (pesoPoder);
+   - riesgo entra al score (antes se prometía en el paywall y
+     no existía);
+   - regla de honestidad EN CÓDIGO: 0 competidores nunca da verde
+     — puede ser oportunidad o señal de que ahí no se busca.
+   ============================================================ */
+const VEREDICTO = {
+  verde:{palabra:'Va',       color:'var(--jade)',  sub:'Buena zona para este negocio'},
+  amber:{palabra:'Aguas',    color:'var(--amber)', sub:'Se puede, pero con cuidado'},
+  roja: {palabra:'Mejor no', color:'var(--brick)', sub:'La zona juega en tu contra'},
+};
+const RIESGO_PENA = {Bajo:0, Medio:4, Alto:11};
+const RIESGO_NIVEL = {Bajo:85, Medio:55, Alto:25};
+
+function evaluar(giroKey, z){
+  const giro = GIROS[giroKey];
+  const genteN = {Baja:34, Media:64, Alta:90}[z.gente];
+  const poderN = z.poder*18;                                    // 18..90
+  const demanda = genteN*(1-giro.pesoPoder) + poderN*giro.pesoPoder;
+  const comp = z.comp[giroKey];
+  const saturacion = Math.min(100, (comp/giro.tolerancia)*62);  // relativa al giro
+  let score = Math.round(Math.max(2, Math.min(98,
+    demanda - saturacion*0.55 - RIESGO_PENA[z.riesgo])));
+  let campoLibre = false;
+  if(comp===0 && score>62){ score = 62; campoLibre = true; }    // nunca verde sin evidencia
+  const luz = score>=66 ? 'verde' : score>=42 ? 'amber' : 'roja';
+  return {
+    score, luz, comp, campoLibre,
+    gente:z.gente, poder:z.poder, riesgo:z.riesgo,
+    niveles:{                                                    // 0-100 para las barras del reporte
+      competencia: Math.round(100 - saturacion),
+      gente: genteN,
+      poder: Math.round(poderN*100/90),
+      riesgo: RIESGO_NIVEL[z.riesgo],
+    },
+  };
+}
+
+function fraseComp(giroKey, comp){
+  const n = GIROS[giroKey].label.toLowerCase();
+  if(comp===0) return `No hay ninguna ${n} cerca. El campo está libre — puede ser oportunidad o señal de que ahí no se busca.`;
+  if(comp<=2)  return `Solo hay ${comp} cerca. Poca competencia: espacio para entrar.`;
+  if(comp<=5)  return `Hay ${comp} cerca. Competencia media — tendrás que diferenciarte.`;
+  return `Hay ${comp} cerca. La zona está saturada — cuesta más ganarse al cliente.`;
+}
+function fraseGente(g){
+  return {Alta:'Mucha gente pasa y vive por aquí.',Media:'Movimiento de gente moderado.',Baja:'Poca gente en la zona — el flujo es bajo.'}[g];
+}
+function frasePoder(p){
+  if(p>=4) return 'El poder de compra de la zona es alto.';
+  if(p===3) return 'El poder de compra es medio.';
+  return 'El poder de compra es bajo — la gente cuida cada peso.';
+}
+function fraseRiesgo(rz){
+  return {
+    Bajo:'La zona es tranquila comparada con el resto de la ciudad.',
+    Medio:'La zona tiene incidencia media — como buena parte de la ciudad. Vale asegurar el local.',
+    Alto:'La incidencia en la zona es alta. Considera el costo de seguridad y seguro en tus números.',
+  }[rz];
+}
+function colorNivel(n){ return n>=66 ? 'var(--jade)' : n>=42 ? 'var(--amber)' : 'var(--brick)'; }
+
+/* ============================================================
+   ESTADO + RUTA (#hash → back del navegador y ligas compartibles)
+   ============================================================ */
+let state = {modo:null, giro:null, estado:'14', muni:'14039', zona:null, desbloqueado:false};
+let applyingHash = false;
+
+function writeHash(){
+  const p = new URLSearchParams();
+  if(state.modo) p.set('m', state.modo);
+  if(state.giro) p.set('g', state.giro);
+  if(state.estado!=='14') p.set('e', state.estado);
+  if(state.muni!=='14039') p.set('mu', state.muni);
+  if(state.zona) p.set('z', state.zona);
+  const h = p.toString() ? '#'+p.toString() : '';
+  if(location.hash !== h && !(location.hash==='' && h==='')){
+    applyingHash = true;
+    location.hash = h || '#';
+    // hashchange dispara async; el flag se limpia allá
+  }
+}
+function readHash(){
+  const p = new URLSearchParams(location.hash.replace(/^#/,''));
+  const m = p.get('m');
+  state.modo = (m==='explorar'||m==='validar') ? m : null;
+  state.giro = GIROS[p.get('g')] ? p.get('g') : null;
+  state.estado = ESTADOS.some(e=>e.clave===p.get('e')&&e.activo) ? p.get('e') : '14';
+  state.muni = (MUNICIPIOS[state.estado]||[]).some(mm=>mm.cve===p.get('mu')&&mm.activo) ? p.get('mu') : '14039';
+  const zs = ZONAS[state.muni]||[];
+  state.zona = zs.some(z=>z.id===p.get('z')) ? p.get('z') : null;
+  state.desbloqueado = false; // lo pagado no se deep-linkea
+}
+window.addEventListener('hashchange', ()=>{
+  if(applyingHash){ applyingHash=false; return; }
+  readHash(); render();
+});
+
+const app = document.getElementById('app');
+
+function set(patch){ Object.assign(state, patch); writeHash(); render(); }
+
+/* delegación de eventos — sin onclick inline */
+app.addEventListener('click', (e)=>{
+  const el = e.target.closest('[data-action]');
+  if(!el) return;
+  const a = el.dataset.action;
+  if(a==='modo')       set({modo:el.dataset.modo, giro:state.giro, zona:null, desbloqueado:false});
+  if(a==='volver')     set({modo:null, zona:null, desbloqueado:false});
+  if(a==='ir-validar') { set({modo:'validar', zona:el.dataset.zona, desbloqueado:false}); window.scrollTo({top:0,behavior:'smooth'}); }
+  if(a==='desbloquear'){ state.desbloqueado=true; render(); }
+  if(a==='comparar')   set({modo:'explorar', zona:null, desbloqueado:false});
+  if(a==='imprimir')   window.print();
+});
+app.addEventListener('change', (e)=>{
+  if(e.target.id==='giroSel')   set({giro:e.target.value||null, desbloqueado:false});
+  if(e.target.id==='estadoSel') set({estado:e.target.value, zona:null, desbloqueado:false});
+  if(e.target.id==='muniSel')   set({muni:e.target.value, zona:null, desbloqueado:false});
+  if(e.target.id==='zonaSel')   set({zona:e.target.value||null, desbloqueado:false});
+});
+
+function focusHeading(){
+  const h = app.querySelector('h1[tabindex], h2[tabindex]');
+  if(h) h.focus({preventScroll:true});
+}
+
+function render(){
+  if(!state.modo) home();
+  else if(state.modo==='explorar') explorar();
+  else validar();
+  focusHeading();
+}
+
+/* ---------- selectores compartidos ---------- */
+function selectorGiro(){
+  return `<div>
+    <label class="field" for="giroSel">¿Qué quieres abrir?</label>
+    <select id="giroSel">
+      <option value="">Elige un giro…</option>
+      ${Object.entries(GIROS).map(([k,v])=>`<option value="${k}" ${state.giro===k?'selected':''}>${v.emoji}  ${v.label}</option>`).join('')}
+    </select>
+  </div>`;
+}
+function selectorLugar(conColonia){
+  const munis = MUNICIPIOS[state.estado]||[];
+  const zonas = ZONAS[state.muni]||[];
+  return `
+  <div>
+    <label class="field" for="estadoSel">Estado</label>
+    <select id="estadoSel">
+      ${ESTADOS.map(e=>`<option value="${e.clave}" ${state.estado===e.clave?'selected':''} ${e.activo?'':'disabled'}>${e.nombre}${e.activo?'':' · próximamente'}</option>`).join('')}
+    </select>
+  </div>
+  <div>
+    <label class="field" for="muniSel">Ciudad</label>
+    <select id="muniSel">
+      ${munis.map(m=>`<option value="${m.cve}" ${state.muni===m.cve?'selected':''} ${m.activo?'':'disabled'}>${m.nombre}${m.activo?'':' · próximamente'}</option>`).join('')}
+    </select>
+  </div>
+  ${conColonia ? `
+  <div>
+    <label class="field" for="zonaSel">¿En qué colonia está el local?</label>
+    <select id="zonaSel">
+      <option value="">Elige una colonia…</option>
+      ${zonas.map(z=>`<option value="${z.id}" ${state.zona===z.id?'selected':''}>${z.nombre}</option>`).join('')}
+    </select>
+    <p style="font-size:12px;color:var(--ink-soft);margin:9px 0 0">Muy pronto: escribe la dirección exacta del local y la ubicamos por ti.</p>
+  </div>` : ''}`;
+}
+
+/* ---------- HOME ---------- */
+function home(){
+  app.innerHTML = `
+  <section class="fade" style="padding-top:22px">
+    <p class="eyebrow" style="margin:0 0 14px">Antes de firmar la renta</p>
+    <h1 class="display" tabindex="-1" style="font-size:clamp(34px,6vw,58px);font-weight:800;margin:0 0 18px;max-width:15ch">
+      Averigua si el local <span style="color:var(--jade)">te conviene</span>.
+    </h1>
+    <p style="font-size:18px;color:var(--ink-soft);max-width:52ch;margin:0 0 34px;line-height:1.5">
+      El estudio de mercado que nunca pudiste pagar — por el precio de una comida. Dime qué quieres abrir y te digo dónde tienes buena mano.
+    </p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:720px" id="paths">
+      <button class="choice" data-action="modo" data-modo="explorar">
+        <div style="font-size:26px;margin-bottom:12px" aria-hidden="true">🧭</div>
+        <div class="display" style="font-size:21px;font-weight:700;margin-bottom:6px">No sé dónde abrir</div>
+        <div style="color:var(--ink-soft);font-size:15px;line-height:1.45">Explora las mejores zonas para tu giro y compáralas.</div>
+        <div style="margin-top:14px;font-size:13px;font-weight:700;color:var(--jade)">Explorar zonas · gratis →</div>
+      </button>
+      <button class="choice" data-action="modo" data-modo="validar">
+        <div style="font-size:26px;margin-bottom:12px" aria-hidden="true">📍</div>
+        <div class="display" style="font-size:21px;font-weight:700;margin-bottom:6px">Ya tengo un local en mente</div>
+        <div style="color:var(--ink-soft);font-size:15px;line-height:1.45">Dame la zona y te doy el veredicto antes de que firmes.</div>
+        <div style="margin-top:14px;font-size:13px;font-weight:700;color:var(--jade)">Validar ubicación →</div>
+      </button>
+    </div>
+    <p style="font-size:13px;color:var(--ink-soft);margin:26px 0 0">Empezamos en <strong style="color:var(--ink)">Guadalajara</strong>. CDMX y Monterrey, próximamente.</p>
+  </section>`;
+}
+
+/* ---------- EXPLORAR ---------- */
+function explorar(){
+  const muniNombre = (MUNICIPIOS[state.estado]||[]).find(m=>m.cve===state.muni)?.nombre ?? '';
+  app.innerHTML = `
+  <button class="btn-ghost fade no-print" style="margin:18px 0 22px" data-action="volver">← Volver</button>
+  <section class="fade">
+    <p class="eyebrow" style="margin:0 0 10px">Explorar zonas · gratis</p>
+    <h2 class="display" tabindex="-1" style="font-size:30px;font-weight:800;margin:0 0 22px">Las mejores zonas para tu negocio</h2>
+    <div class="card" style="padding:20px;max-width:520px;margin-bottom:28px;display:grid;gap:16px">
+      ${selectorGiro()}
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">${selectorLugar(false)}</div>
+    </div>
+    <div id="rank" aria-live="polite"></div>
+  </section>`;
+  const rank = document.getElementById('rank');
+  if(!state.giro){
+    rank.innerHTML = `<div style="color:var(--ink-soft);font-size:15px;padding:8px 2px">Elige un giro arriba para ver el ranking de zonas.</div>`;
+    return;
+  }
+  const zonas = ZONAS[state.muni]||[];
+  const res = zonas.map(z=>({z,...evaluar(state.giro,z)})).sort((a,b)=>b.score-a.score);
+  const giroLabel = GIROS[state.giro].label.toLowerCase();
+  rank.innerHTML = `
+    <p style="font-size:13px;color:var(--ink-soft);margin:0 0 14px">${res.length} zonas de ${muniNombre} ordenadas de mejor a peor para <strong style="color:var(--ink)">${giroLabel}</strong></p>
+    <div style="display:flex;flex-direction:column;gap:10px">
+    ${res.map((r,i)=>`
+      <button class="card rank-row ${i===0?'top':''}" data-action="ir-validar" data-zona="${r.z.id}"
+              aria-label="${r.z.nombre}: ${VEREDICTO[r.luz].palabra}, ${r.score} de 100. Ver veredicto completo.">
+        <span class="rank-num">${String(i+1).padStart(2,'0')}</span>
+        <div style="flex:1;min-width:0">
+          <div class="display" style="font-size:18px;font-weight:700">${r.z.nombre}${r.campoLibre?'<span class="badge-libre">campo libre</span>':''}</div>
+          <div style="font-size:13px;color:var(--ink-soft)">${r.comp===0?`ninguna ${giroLabel}`:`${r.comp} ${giroLabel}${r.comp===1?'':'s'}`} cerca · gente ${r.gente.toLowerCase()} · riesgo ${r.riesgo.toLowerCase()}</div>
+        </div>
+        <div class="rank-score">
+          <div class="bar-track"><div class="bar-fill" style="width:${r.score}%;background:${VEREDICTO[r.luz].color}"></div></div>
+          <div style="display:flex;justify-content:space-between;margin-top:6px;align-items:baseline">
+            <span class="mono" style="font-size:12px;color:var(--ink-soft)">${r.score}/100</span>
+            <span style="font-size:12px;font-weight:700;color:${VEREDICTO[r.luz].color}">${VEREDICTO[r.luz].palabra}</span>
+          </div>
+        </div>
+      </button>`).join('')}
+    </div>
+    <p style="font-size:13px;color:var(--ink-soft);margin:20px 0 0">Toca una zona para ver el veredicto completo y decidir con datos.</p>`;
+}
+
+/* ---------- VALIDAR ---------- */
+function validar(){
+  const muniNombre = (MUNICIPIOS[state.estado]||[]).find(m=>m.cve===state.muni)?.nombre ?? '';
+  app.innerHTML = `
+  <button class="btn-ghost fade no-print" style="margin:18px 0 22px" data-action="volver">← Volver</button>
+  <section class="fade">
+    <p class="eyebrow" style="margin:0 0 10px">Validar ubicación</p>
+    <h2 class="display" tabindex="-1" style="font-size:30px;font-weight:800;margin:0 0 22px">¿Me conviene esta zona?</h2>
+    <div class="card no-print" style="padding:20px;max-width:520px;margin-bottom:28px;display:grid;gap:16px">
+      ${selectorGiro()}
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">${selectorLugar(false)}</div>
+      <div>
+        <label class="field" for="zonaSel">¿En qué colonia está el local?</label>
+        <select id="zonaSel">
+          <option value="">Elige una colonia…</option>
+          ${(ZONAS[state.muni]||[]).map(z=>`<option value="${z.id}" ${state.zona===z.id?'selected':''}>${z.nombre}</option>`).join('')}
+        </select>
+        <p style="font-size:12px;color:var(--ink-soft);margin:9px 0 0">Muy pronto: escribe la dirección exacta del local y la ubicamos por ti.</p>
+      </div>
+    </div>
+    <div id="veredicto" aria-live="polite"></div>
+  </section>`;
+  const box = document.getElementById('veredicto');
+  if(!state.giro || !state.zona){
+    box.innerHTML = `<div style="color:var(--ink-soft);font-size:15px;padding:8px 2px">Elige el giro y la colonia para ver el veredicto.</div>`;
+    return;
+  }
+  const z = (ZONAS[state.muni]||[]).find(x=>x.id===state.zona);
+  if(!z){ box.innerHTML=''; return; }
+  const r = evaluar(state.giro,z);
+  const v = VEREDICTO[r.luz];
+  const g = GIROS[state.giro];
+
+  box.innerHTML = `
+  <div class="card fade" style="padding:24px;overflow:hidden">
+    <!-- veredicto (gratis) -->
+    <div style="display:flex;gap:22px;align-items:center;flex-wrap:wrap">
+      <div class="semaforo" role="img" aria-label="Semáforo: ${v.palabra}">
+        <span class="luz roja  ${r.luz==='roja' ?'on':''}"></span>
+        <span class="luz amber ${r.luz==='amber'?'on':''}"></span>
+        <span class="luz verde ${r.luz==='verde'?'on':''}"></span>
+      </div>
+      <div style="flex:1;min-width:200px">
+        <div style="font-size:13px;color:var(--ink-soft);font-weight:600">${g.emoji} ${g.label} en ${z.nombre}, ${muniNombre}</div>
+        <div class="display" style="font-size:40px;font-weight:800;color:${v.color};line-height:1.05;margin:4px 0 2px">${v.palabra}</div>
+        <div style="font-size:15px;color:var(--ink-soft)">${v.sub}${r.campoLibre?' — sin negocios como el tuyo aún: léelo con calma abajo.':''}</div>
+      </div>
+      <div style="text-align:center">
+        <div class="mono" style="font-size:30px;font-weight:700;color:${v.color}">${r.score}</div>
+        <div style="font-size:11px;color:var(--ink-soft);letter-spacing:.08em">DE 100</div>
+      </div>
+    </div>
+
+    <!-- primer factor gratis -->
+    <div style="margin-top:22px;padding-top:20px;border-top:1px solid var(--line)">
+      <div class="factor">
+        <div class="head">
+          <span class="name">Competencia cerca · gratis</span>
+          <span class="grain">en tu colonia</span>
+        </div>
+        <div class="bar-track"><div class="bar-fill" style="width:${r.niveles.competencia}%;background:${colorNivel(r.niveles.competencia)}"></div></div>
+        <p style="margin:0;font-size:16px;line-height:1.5">${fraseComp(state.giro,r.comp)}</p>
+      </div>
+    </div>
+
+    ${state.desbloqueado ? reporteCompleto(r,z,muniNombre) : paywall(g.precio)}
+  </div>`;
+}
+
+function paywall(precio){
+  return `
+  <div style="margin-top:18px;position:relative">
+    <div class="locked" aria-hidden="true">
+      <div style="padding-top:18px;border-top:1px solid var(--line)">
+        <div style="font-size:12px;font-weight:700;text-transform:uppercase;color:var(--jade);margin-bottom:8px">Gente y demanda</div>
+        <p style="margin:0 0 14px;font-size:16px">La zona tiene un movimiento de gente que…</p>
+        <div style="font-size:12px;font-weight:700;text-transform:uppercase;color:var(--jade);margin-bottom:8px">Recomendación</div>
+        <p style="margin:0;font-size:16px">Con esta combinación te conviene entrar si…</p>
+      </div>
+    </div>
+    <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:16px">
+      <div style="background:var(--paper-2);border:1.5px solid var(--jade);border-radius:16px;padding:22px;text-align:center;max-width:400px;box-shadow:0 12px 40px -16px rgba(31,107,79,.5)">
+        <div class="display" style="font-size:19px;font-weight:700;margin-bottom:6px">Desbloquea el reporte completo</div>
+        <p style="font-size:14px;color:var(--ink-soft);margin:0 0 16px;line-height:1.45">Gente y demanda, poder de compra, riesgo de la zona y una recomendación clara de sí o no.</p>
+        <button class="btn-primary" style="width:100%" data-action="desbloquear">Ver reporte completo · $${precio} MXN</button>
+        <p style="font-size:12px;color:var(--ink-soft);margin:12px 0 0;line-height:1.45">Pago único por este reporte. Si los datos de tu zona vienen incompletos, te lo decimos antes de cobrar.</p>
+        <p class="mono" style="font-size:11px;color:var(--ink-soft);margin:8px 0 0">demo — aquí iría el cobro con tarjeta / OXXO / SPEI</p>
+      </div>
+    </div>
+  </div>`;
+}
+
+function factorHTML(nombre, grain, nivel, frase){
+  return `
+  <div class="factor">
+    <div class="head">
+      <span class="name">${nombre}</span>
+      <span class="grain">${grain}</span>
+    </div>
+    <div class="bar-track"><div class="bar-fill" style="width:${nivel}%;background:${colorNivel(nivel)}"></div></div>
+    <p style="margin:0;font-size:16px;line-height:1.5">${frase}</p>
+  </div>`;
+}
+
+function reporteCompleto(r,z,muniNombre){
+  let reco;
+  if(r.campoLibre)         reco = `Nadie ha puesto un negocio como el tuyo aquí. Eso puede ser una mina — o una señal de que la demanda no da. Antes de firmar, párate en la zona un martes y un sábado y cuenta cuánta gente pasa. Si el flujo es real, serías el primero y eso vale mucho.`;
+  else if(r.luz==='verde') reco = `Los números te acompañan: buena demanda y competencia manejable. Es una zona donde vale la pena entrar. Aun así, camina el local en distintos horarios antes de firmar.`;
+  else if(r.luz==='amber') reco = `Se puede, pero no es terreno fácil. Vas a necesitar algo que te distinga de los que ya están — precio, horario, servicio o surtido. Si no tienes ese diferencial claro, piénsalo dos veces.`;
+  else                     reco = `Los números juegan en tu contra en esta zona. No es imposible, pero estás empezando cuesta arriba. Antes de firmar, compara con otras colonias — probablemente encuentres mejor mano en otro lado.`;
+
+  return `
+  <div class="fade" style="margin-top:18px;padding-top:20px;border-top:1px solid var(--line);display:grid;gap:20px">
+    ${factorHTML('Gente y demanda','en la zona', r.niveles.gente, fraseGente(r.gente))}
+    ${factorHTML('Poder de compra','en tu ciudad', r.niveles.poder, frasePoder(r.poder))}
+    ${factorHTML('Riesgo de la zona','en tu ciudad', r.niveles.riesgo, fraseRiesgo(r.riesgo))}
+    <div>
+      <div style="font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--jade);margin-bottom:8px">Recomendación</div>
+      <p style="margin:0;font-size:16px;line-height:1.5">${reco}</p>
+    </div>
+    <details class="como">
+      <summary>¿De dónde salen estos datos?</summary>
+      Contamos los negocios como el tuyo en el directorio nacional del INEGI (DENUE),
+      medimos cuánta gente vive y se mueve por la zona con el Censo, estimamos el poder
+      de compra con datos oficiales de ingreso y pobreza, y el riesgo con las cifras
+      públicas de incidencia delictiva. Cada factor te dice a qué nivel aplica:
+      <strong>en tu colonia</strong> es lo más fino; <strong>en tu ciudad</strong> es el
+      promedio del municipio.
+    </details>
+    <div class="aviso">
+      <strong style="color:var(--ink)">Ojo:</strong> esto te orienta con datos públicos del DENUE/INEGI, que tienen margen. No sustituye caminar la zona ni tu instinto de negocio. La decisión es tuya.
+    </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap" class="no-print">
+      <button class="btn-primary" data-action="imprimir">Guardar reporte (PDF)</button>
+      <button class="btn-ghost" data-action="comparar">Comparar con otra zona</button>
+    </div>
+  </div>`;
+}
+
+/* arranque */
+readHash();
+render();
+</script>
+</body>
+</html>
