@@ -6,6 +6,10 @@ export interface BffConfig {
   upstreamApiKey: string;
   /** Absolute path to the built web app (SPA) to serve statically. */
   webDist: string;
+  /** Nominatim base URL — public instance by default, self-hosted later. */
+  nominatimUrl: string;
+  /** Identifying User-Agent required by the public Nominatim policy. */
+  nominatimUserAgent: string;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): BffConfig {
@@ -24,6 +28,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BffConfig {
     // Relative to process CWD — @hono/node-server's serveStatic resolves
     // root against cwd, so the service must run from the repo root.
     webDist: env.WEB_DIST ?? "./web/dist",
+    nominatimUrl: (
+      env.NOMINATIM_URL ?? "https://nominatim.openstreetmap.org"
+    ).replace(/\/$/, ""),
+    nominatimUserAgent:
+      env.NOMINATIM_USER_AGENT ??
+      "uncharted-lite/0.2 (EurekaMS demo; https://lite-demo.187.77.25.101.nip.io)",
   };
 }
 

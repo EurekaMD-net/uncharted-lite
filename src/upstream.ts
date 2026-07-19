@@ -70,6 +70,14 @@ export interface ColoniasByAgebResult {
   colonias: ColoniaListRow[];
 }
 
+export interface ResolveAgebResult {
+  lat: number;
+  lon: number;
+  cvegeo: string;
+  ambito: "Urbana" | "Rural" | null;
+  cve_mun: string;
+}
+
 export interface RiskMunicipioRow {
   cve_mun: string;
   delitos_per_1k_pop: number | null;
@@ -86,9 +94,21 @@ interface CacheEntry {
   expiresAt: number;
 }
 
+/**
+ * Bounded: expired entries were only evicted on same-key re-access, and two
+ * cache keys are attacker-influenced (geocode text, resolve coords) — a
+ * rotation of unique keys would grow the Map monotonically (audit W2).
+ * On overflow, the oldest insertions are dropped (Map preserves insertion
+ * order); hot keys re-enter on next fetch.
+ */
+const CACHE_MAX_ENTRIES = 5_000;
+
 export class TtlCache {
   private store = new Map<string, CacheEntry>();
-  constructor(private now: () => number = Date.now) {}
+  constructor(
+    private now: () => number = Date.now,
+    private maxEntries: number = CACHE_MAX_ENTRIES,
+  ) {}
 
   get<T>(key: string): T | undefined {
     const hit = this.store.get(key);
@@ -101,6 +121,10 @@ export class TtlCache {
   }
 
   set(key: string, value: unknown, ttlMs: number): void {
+    if (this.store.size >= this.maxEntries && !this.store.has(key)) {
+      const oldest = this.store.keys().next();
+      if (!oldest.done) this.store.delete(oldest.value);
+    }
     this.store.set(key, { value, expiresAt: this.now() + ttlMs });
   }
 }
@@ -120,6 +144,7 @@ const TTL = {
   colonias: 60 * 60 * 1000,
   opportunity: 60 * 60 * 1000,
   risk: 6 * 60 * 60 * 1000,
+  resolve: 24 * 60 * 60 * 1000,
 } as const;
 
 const UPSTREAM_TIMEOUT_MS = 15_000;
@@ -199,6 +224,29 @@ export class Upstream {
       `/analytics/colonias-by-ageb?cvegeo=${encodeURIComponent(cvegeo)}`,
       TTL.colonias,
     );
+  }
+
+  /**
+   * Point → AGEB (upstream ST_Contains). Returns null when no polygon
+   * contains the point (upstream 404 resolve.no_ageb) — that's a normal
+   * outcome for e.g. open country, not an error. Coords rounded to 5
+   * decimals (~1m) for a stable cache key.
+   */
+  async resolveAgeb(
+    lat: number,
+    lon: number,
+  ): Promise<ResolveAgebResult | null> {
+    const latS = lat.toFixed(5);
+    const lonS = lon.toFixed(5);
+    try {
+      return await this.fetchJson<ResolveAgebResult>(
+        `/resolve/ageb?lat=${latS}&lon=${lonS}`,
+        TTL.resolve,
+      );
+    } catch (err) {
+      if (err instanceof UpstreamError && err.status === 404) return null;
+      throw err;
+    }
   }
 
   riskSummary(entidad: string): Promise<RiskSummaryResult> {

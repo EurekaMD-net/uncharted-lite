@@ -31,10 +31,14 @@ browser ── https ── Caddy (lite-demo.…nip.io, overwrites X-Forwarded-F
         · exposes ONLY cooked endpoints, serves the built SPA
         · per-IP rate limits: 30/min general, 10/min verdict, 6/min explore
         · semáforo thresholds + verdict engine live here, server-side
-                      │
-                      ▼
-        México Uncharted API (eurekamd-denue-analysis, 127.0.0.1:3030)
-        · DENUE 6.1M establishments × Censo × CONEVAL × SESNSP …
+              │                          │
+              ▼                          ▼
+  México Uncharted API          Nominatim (NOMINATIM_URL —
+  (eurekamd-denue-analysis,      public OSM instance for the demo;
+   127.0.0.1:3030)               policy enforced in src/geocoder.ts:
+  · DENUE 6.1M × Censo ×         identifying UA, 1 req/s serialized,
+    CONEVAL × SESNSP ×           24h cache, depth-capped queue →
+    ageb_polygons                self-hosted swap = env change)
 ```
 
 Security stance mirrors `intelligence-ops-mcp`: bounded read-only surface,
@@ -47,15 +51,16 @@ cold municipio, cached 1h).
 
 ## BFF surface (everything the browser can reach)
 
-| Route                 | Params                     | Returns                                                                                                           |
-| --------------------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `GET /api/health`     | —                          | liveness                                                                                                          |
-| `GET /api/giros`      | —                          | `{id,label,emoji,precio}` — no SCIAN, no tuning                                                                   |
-| `GET /api/estados`    | —                          | all 32 states, all active                                                                                         |
-| `GET /api/municipios` | `estado`                   | every municipio of the estado (nameless noise rows dropped)                                                       |
-| `GET /api/colonias`   | `municipio`                | colonia names (top 200 by activity; small-town relief floor for rural munis)                                      |
-| `GET /api/verdict`    | `giro, municipio, colonia` | semáforo + 4 factors + recommendation (colonia grain)                                                             |
-| `GET /api/explore`    | `giro, municipio`          | top 12 zones — AGEB grain aggregated per colonia label, with `habitantes`; colonia-grain fallback for rural munis |
+| Route                        | Params                         | Returns                                                                                                                                                                                                 |
+| ---------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/health`            | —                              | liveness                                                                                                                                                                                                |
+| `GET /api/giros`             | —                              | `{id,label,emoji,precio}` — no SCIAN, no tuning                                                                                                                                                         |
+| `GET /api/estados`           | —                              | all 32 states, all active                                                                                                                                                                               |
+| `GET /api/municipios`        | `estado`                       | every municipio of the estado (nameless noise rows dropped)                                                                                                                                             |
+| `GET /api/colonias`          | `municipio`                    | colonia names (top 200 by activity; small-town relief floor for rural munis)                                                                                                                            |
+| `GET /api/verdict`           | `giro, municipio, colonia`     | semáforo + 4 factors + recommendation (colonia grain)                                                                                                                                                   |
+| `GET /api/explore`           | `giro, municipio`              | top 12 zones — AGEB grain aggregated per colonia label, with `habitantes`; colonia-grain fallback for rural munis                                                                                       |
+| `GET /api/verdict-direccion` | `giro, direccion[, municipio]` | address → Nominatim → `/resolve/ageb` → **zone-grain** verdict (AGEB competencia + rezago poder); colonia-grain fallback; distinct honest errors for no-geocode / no-AGEB / no-activity / geocoder-busy |
 
 Unknown `/api/*` → JSON 404. Everything else serves the SPA (`web/dist`).
 
@@ -125,13 +130,12 @@ Dev: `npm run dev` (BFF) + `cd web && npm run dev` (Vite on 5173, proxies `/api`
 - **Paywall is client-side only.** The full report crosses the wire on
   `/api/verdict`; DevTools reveals it. Server-side gating arrives with
   payments (out of scope this pass) — the endpoint split is ready for it.
-- **Explore vs Validate grain gap.** Explore scores a colonia label from the
-  aggregate of its populous AGEBs (Censo population + rezago); Validate
-  scores the whole colonia from DENUE activity + muni-grain poder. Tapping
-  through can shift the score/luz — both readings are true at their grain.
-  Converges when Validate resolves to AGEB (Phase 2, below).
-- **In Validate, poder/riesgo are muni-grain.** Zone-grain arrives with the
-  AGEB resolve (below). Riesgo is muni-grain everywhere.
+- **Explore vs Validate-by-colonia grain gap.** Explore scores a colonia
+  label from the aggregate of its populous AGEBs; Validate-by-colonia scores
+  the whole colonia from DENUE activity + muni-grain poder. Both readings
+  are true at their grain. **Validate-by-address closes the gap**: it lands
+  on the exact AGEB (zone-grain competencia + rezago poder, labeled
+  "grano: zona"). Riesgo is muni-grain everywhere.
 - **Explore's AGEB view covers a muni's top-100 AGEBs by population** —
   upstream's per-request cap. Smaller zones surface via the colonia
   fallback and Validate.
@@ -144,7 +148,9 @@ Dev: `npm run dev` (BFF) + `cd web && npm run dev` (Vite on 5173, proxies `/api`
   pickers populated in all 8 sampled metros (68–200 entries), Explore
   returned 12 AGEB-grain zones in all 4 sampled cities.
 
-## Phase 2 backend dependency: `/resolve/ageb` — ✅ SHIPPED 2026-07-19
+## Phase 2: address validation — ✅ SHIPPED 2026-07-19
+
+### Backend `/resolve/ageb`
 
 Live on `eurekamd-denue-analysis` (commit `047c848`), authenticated like every
 other upstream route:
@@ -160,10 +166,19 @@ GET /resolve/ageb?lat=&lon=          (X-Api-Key)
 Verified live: Ángel de la Independencia → `0901500010930` / `09015` (145ms);
 a Chapalita point correctly lands in `14120` (Zapopan side of the border).
 
-What remains for Phase 2 is the **geocoder** in front of it: self-hosted
-Nominatim with a Mexico OSM extract (≈$0/call); Google Geocoding ($5/1k) only
-as a paid-flow fallback if accuracy demands it. Then Validate resolves
-addresses → AGEB and the Explore/Validate grain gap closes.
+**Geocoder — ✅ WIRED 2026-07-19.** Validate's address field is live:
+`direccion` → Nominatim → `/resolve/ageb` → zone-grain verdict, with a
+colonia-grain fallback when the AGEB is outside the muni's top-100 set, and
+distinct honest errors for every miss (no-geocode 404, outside-census 404,
+no-activity 404, geocoder-busy 503, geocoder-down 502).
+
+The geocoder (`src/geocoder.ts`) points at `NOMINATIM_URL` — the **public
+nominatim.openstreetmap.org for the demo**, with its usage policy enforced
+in code: identifying User-Agent, calls serialized at ≤1 req/s, 24h result
+cache, and a depth-capped queue (8) that fails fast instead of holding
+connections. Self-hosting a Mexico OSM extract later is an env-var change,
+no code. Google Geocoding ($5/1k) stays the paid-flow fallback option if
+accuracy demands it — never exposed to free traffic.
 
 ## Repo layout
 

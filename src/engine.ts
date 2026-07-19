@@ -49,11 +49,17 @@ export interface EngineInput {
   /** Municipio crime per-1k percentile within its entidad (0-100), null = no data. */
   riesgoPercentil: number | null;
   /**
-   * Zone-grain CONEVAL rezago social (AGEB explore path). When present it
+   * Zone-grain CONEVAL rezago social (AGEB paths). When present it
    * REPLACES the muni-grain pobreza signal for poder — finer and honest,
    * so the factor is labeled "en la zona" instead of "en tu ciudad".
    */
   rezagoGrado?: RezagoGrado | null;
+  /**
+   * Grain label for the competencia factor. Colonia-grain verdicts keep the
+   * default; AGEB-resolved (address) verdicts pass "zona" — the competitor
+   * count there is the AGEB's, not the whole colonia's.
+   */
+  competenciaGrain?: Grain;
 }
 
 export const VEREDICTO_META: Record<Luz, { palabra: string; sub: string }> = {
@@ -197,7 +203,7 @@ export function evaluar(input: EngineInput): Veredicto {
     competencia: {
       nivel: clamp(Math.round(100 - saturacion), 0, 100),
       frase: fraseComp(giro.label, comp),
-      grain: "colonia",
+      grain: input.competenciaGrain ?? "colonia",
     },
     gente: {
       nivel: gentePercentil,

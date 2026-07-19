@@ -300,7 +300,7 @@ export function Explorar({ state, giros, estados, set }: ViewProps) {
               municipioNombre={ranking.data.municipioNombre}
               giroLabel={giroLabel}
               onPick={(colonia) => {
-                set({ modo: "validar", colonia });
+                set({ modo: "validar", colonia, direccion: null });
                 window.scrollTo({ top: 0, behavior: "smooth" });
               }}
             />
@@ -408,15 +408,22 @@ export function Validar({ state, giros, estados, set }: ViewProps) {
   const munis = useAsync(() => api.municipios(state.estado), [state.estado]);
   useMunicipioGuard(state, set, munis.data?.municipios ?? []);
   const cols = useAsync(() => api.colonias(state.municipio), [state.municipio]);
+  const porDireccion = Boolean(state.direccion);
   const verdict = useAsync(
-    () => api.verdict(state.giro!, state.municipio, state.colonia!),
-    [state.giro, state.municipio, state.colonia],
-    Boolean(state.giro && state.municipio && state.colonia),
+    () =>
+      porDireccion
+        ? api.verdictDireccion(state.giro!, state.direccion!, state.municipio)
+        : api.verdict(state.giro!, state.municipio, state.colonia!),
+    [state.giro, state.municipio, state.colonia, state.direccion],
+    Boolean(
+      state.giro && state.municipio && (state.colonia || state.direccion),
+    ),
   );
   const [desbloqueado, setDesbloqueado] = useState(false);
+  const [direccionDraft, setDireccionDraft] = useState(state.direccion ?? "");
   useEffect(() => {
     setDesbloqueado(false);
-  }, [state.giro, state.municipio, state.colonia]);
+  }, [state.giro, state.municipio, state.colonia, state.direccion]);
 
   return (
     <>
@@ -467,7 +474,9 @@ export function Validar({ state, giros, estados, set }: ViewProps) {
             <select
               id="zonaSel"
               value={state.colonia ?? ""}
-              onChange={(e) => set({ colonia: e.target.value || null })}
+              onChange={(e) =>
+                set({ colonia: e.target.value || null, direccion: null })
+              }
               disabled={cols.loading || !cols.data}
             >
               <option value="">
@@ -479,6 +488,45 @@ export function Validar({ state, giros, estados, set }: ViewProps) {
                 </option>
               ))}
             </select>
+          </div>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const d = direccionDraft.trim();
+              if (d.length >= 5) set({ direccion: d, colonia: null });
+            }}
+          >
+            <label className="field" htmlFor="direccionInput">
+              … o escribe la dirección exacta del local
+            </label>
+            <div style={{ display: "flex", gap: 8 }}>
+              <input
+                id="direccionInput"
+                type="text"
+                value={direccionDraft}
+                onChange={(e) => setDireccionDraft(e.target.value)}
+                placeholder="Av. Chapultepec 480"
+                maxLength={160}
+                style={{
+                  fontFamily: "inherit",
+                  fontSize: 16,
+                  padding: "13px 14px",
+                  borderRadius: 12,
+                  border: "1px solid var(--line)",
+                  background: "var(--paper-2)",
+                  color: "var(--ink)",
+                  flex: 1,
+                  minWidth: 0,
+                }}
+              />
+              <button
+                type="submit"
+                className="btn-ghost"
+                disabled={direccionDraft.trim().length < 5}
+              >
+                Ubicar
+              </button>
+            </div>
             <p
               style={{
                 fontSize: 12,
@@ -486,16 +534,22 @@ export function Validar({ state, giros, estados, set }: ViewProps) {
                 margin: "9px 0 0",
               }}
             >
-              Muy pronto: escribe la dirección exacta del local y la ubicamos
-              por ti.
+              Con la dirección afinamos el veredicto a tu zona exacta, no solo a
+              la colonia.
             </p>
-          </div>
+          </form>
         </div>
         <div aria-live="polite">
-          {!state.giro || !state.colonia ? (
-            <Cargando msg="Elige el giro y la colonia para ver el veredicto." />
+          {!state.giro || (!state.colonia && !state.direccion) ? (
+            <Cargando msg="Elige el giro y la colonia — o escribe la dirección — para ver el veredicto." />
           ) : verdict.loading ? (
-            <Cargando msg="Cruzando los datos de tu zona…" />
+            <Cargando
+              msg={
+                porDireccion
+                  ? "Ubicando tu dirección y cruzando los datos de tu zona…"
+                  : "Cruzando los datos de tu zona…"
+              }
+            />
           ) : verdict.error ? (
             <ErrorNota msg={verdict.error} />
           ) : verdict.data ? (
@@ -503,7 +557,9 @@ export function Validar({ state, giros, estados, set }: ViewProps) {
               data={verdict.data}
               desbloqueado={desbloqueado}
               onDesbloquear={() => setDesbloqueado(true)}
-              onComparar={() => set({ modo: "explorar", colonia: null })}
+              onComparar={() =>
+                set({ modo: "explorar", colonia: null, direccion: null })
+              }
             />
           ) : null}
         </div>
@@ -543,6 +599,24 @@ function VerdictCard({
             {data.giro.emoji} {data.giro.label} en {data.lugar.colonia},{" "}
             {data.lugar.municipioNombre}
           </div>
+          {data.lugar.direccion && (
+            <div
+              style={{
+                fontSize: 12,
+                color: "var(--ink-soft)",
+                marginTop: 2,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+              title={data.lugar.direccion}
+            >
+              📍 {data.lugar.direccion}
+              {data.lugar.grano === "zona"
+                ? " · veredicto de tu zona exacta"
+                : ""}
+            </div>
+          )}
           <div
             className="display"
             style={{

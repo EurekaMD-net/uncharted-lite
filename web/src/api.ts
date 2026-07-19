@@ -43,7 +43,15 @@ export interface Veredicto {
 export interface VerdictResponse {
   ok: true;
   giro: Giro;
-  lugar: { municipio: string; municipioNombre: string; colonia: string };
+  lugar: {
+    municipio: string;
+    municipioNombre: string;
+    colonia: string;
+    /** Present on address-based verdicts: Nominatim's resolved address. */
+    direccion?: string;
+    /** "zona" (AGEB-resolved) or "colonia" — which grain the verdict used. */
+    grano?: "zona" | "colonia";
+  };
   veredicto: Veredicto;
 }
 
@@ -102,6 +110,10 @@ export const api = {
   verdict: (giro: string, municipio: string, colonia: string) =>
     get<VerdictResponse>(
       `/api/verdict?giro=${encodeURIComponent(giro)}&municipio=${encodeURIComponent(municipio)}&colonia=${encodeURIComponent(colonia)}`,
+    ),
+  verdictDireccion: (giro: string, direccion: string, municipio: string) =>
+    get<VerdictResponse>(
+      `/api/verdict-direccion?giro=${encodeURIComponent(giro)}&direccion=${encodeURIComponent(direccion)}&municipio=${encodeURIComponent(municipio)}`,
     ),
   explore: (giro: string, municipio: string) =>
     get<ExploreResponse>(

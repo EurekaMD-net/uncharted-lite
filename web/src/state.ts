@@ -10,6 +10,8 @@ export interface AppState {
   estado: string;
   municipio: string;
   colonia: string | null;
+  /** Free-text address (Validate Phase 2). Mutually exclusive with colonia. */
+  direccion: string | null;
 }
 
 export const DEFAULT_ESTADO = "14";
@@ -24,6 +26,7 @@ export function readHash(hash: string): AppState {
     estado: p.get("e") ?? DEFAULT_ESTADO,
     municipio: p.get("mu") ?? DEFAULT_MUNICIPIO,
     colonia: p.get("z"),
+    direccion: p.get("d"),
   };
 }
 
@@ -34,6 +37,7 @@ export function writeHash(s: AppState): string {
   if (s.estado !== DEFAULT_ESTADO) p.set("e", s.estado);
   if (s.municipio !== DEFAULT_MUNICIPIO) p.set("mu", s.municipio);
   if (s.colonia) p.set("z", s.colonia);
+  if (s.direccion) p.set("d", s.direccion);
   const q = p.toString();
   return q ? `#${q}` : "";
 }

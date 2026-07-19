@@ -15,6 +15,7 @@ import { evaluar, isRezagoGrado, percentil, type Veredicto } from "./engine.js";
 import type { OpportunityColoniaRow, Upstream } from "./upstream.js";
 import { UpstreamError } from "./upstream.js";
 import { clientIp, LIMITS, RateLimiter } from "./rate-limit.js";
+import { Geocoder, GeocoderBusyError } from "./geocoder.js";
 
 /** Colonias with fewer establishments than this are statistical noise. */
 const MIN_ACTIVIDAD = 25;
@@ -42,6 +43,7 @@ const MIN_AGEB_ZONES = 3;
 export interface ServerDeps {
   config: BffConfig;
   upstream: Upstream;
+  geocoder?: Geocoder;
   limiters?: {
     general: RateLimiter;
     verdict: RateLimiter;
@@ -57,10 +59,21 @@ function normalizeColonia(raw: string): string {
   return raw.trim().toUpperCase();
 }
 
-export function makeApp({ config, upstream, limiters }: ServerDeps): Hono {
+export function makeApp({
+  config,
+  upstream,
+  geocoder,
+  limiters,
+}: ServerDeps): Hono {
   const general = limiters?.general ?? new RateLimiter(LIMITS.general);
   const verdict = limiters?.verdict ?? new RateLimiter(LIMITS.verdict);
   const explore = limiters?.explore ?? new RateLimiter(LIMITS.explore);
+  const geo =
+    geocoder ??
+    new Geocoder({
+      url: config.nominatimUrl,
+      userAgent: config.nominatimUserAgent,
+    });
   const app = new Hono();
 
   // Periodic prune so idle IPs don't accumulate. Unref'd: never keeps the
@@ -77,7 +90,8 @@ export function makeApp({ config, upstream, limiters }: ServerDeps): Hono {
     const limiter =
       c.req.path === "/api/explore"
         ? explore
-        : c.req.path === "/api/verdict"
+        : c.req.path === "/api/verdict" ||
+            c.req.path === "/api/verdict-direccion"
           ? verdict
           : general;
     if (!limiter.allow(ip)) {
@@ -278,6 +292,174 @@ export function makeApp({ config, upstream, limiters }: ServerDeps): Hono {
         municipio,
         municipioNombre: ctx.municipioNombre,
         colonia: row.colonia,
+      },
+      veredicto,
+    });
+  });
+
+  /**
+   * Address-based Validate (Phase 2): free-text dirección → Nominatim →
+   * upstream /resolve/ageb → AGEB-grain verdict (zone-level competencia,
+   * real population percentile, zone rezago). Falls back to the colonia-
+   * grain verdict via the AGEB's colonia label when the AGEB isn't in the
+   * muni's top-100-by-population set. Every miss is an honest, distinct
+   * message — never a fabricated verdict.
+   */
+  app.get("/api/verdict-direccion", async (c) => {
+    const giroId = c.req.query("giro") ?? "";
+    const direccion = (c.req.query("direccion") ?? "").trim();
+    // Optional scoping from the pickers — improves geocoding accuracy.
+    const municipio = c.req.query("municipio") ?? "";
+    if (!GIROS[giroId])
+      return c.json({ ok: false, error: "giro inválido" }, 400);
+    if (direccion.length < 5 || direccion.length > 160) {
+      return c.json(
+        {
+          ok: false,
+          error: "Escribe la dirección con calle y número (5-160 caracteres).",
+        },
+        400,
+      );
+    }
+
+    const giro = GIROS[giroId]!;
+
+    // Compose the geocode query with picker names when provided.
+    let scope = "";
+    let scopeCtx: Awaited<ReturnType<typeof muniContext>> | null = null;
+    if (CVE_MUN_RE.test(municipio)) {
+      scopeCtx = await muniContext(municipio).catch(() => null);
+      if (scopeCtx?.municipioNombre) scope = `, ${scopeCtx.municipioNombre}`;
+    }
+    let busy = false;
+    const geoResult = await geo
+      .search(`${direccion}${scope}, México`)
+      .catch((err) => {
+        busy = err instanceof GeocoderBusyError;
+        if (!busy) console.error(`[bff] geocoder error: ${err}`);
+        return undefined; // distinct from null = "searched, no match"
+      });
+    if (geoResult === undefined) {
+      // Queue-full fails fast (503) instead of holding the connection for
+      // minutes behind the 1 req/s global drain (audit W1).
+      return c.json(
+        {
+          ok: false,
+          error: busy
+            ? "Hay muchas búsquedas de dirección en este momento. Intenta en unos segundos, o elige tu colonia en la lista."
+            : "El buscador de direcciones no está disponible ahora. Intenta en un momento, o elige tu colonia en la lista.",
+        },
+        busy ? 503 : 502,
+      );
+    }
+    if (geoResult === null) {
+      return c.json(
+        {
+          ok: false,
+          error:
+            "No encontramos esa dirección. Revisa calle y número, o elige tu colonia en la lista.",
+        },
+        404,
+      );
+    }
+
+    const resolved = await upstream.resolveAgeb(geoResult.lat, geoResult.lon);
+    if (!resolved) {
+      return c.json(
+        {
+          ok: false,
+          error:
+            "Encontramos la dirección, pero cae fuera de las zonas censadas que cubrimos. Elige tu colonia en la lista.",
+        },
+        404,
+      );
+    }
+
+    const cveMun = resolved.cve_mun;
+    const [agebs, ctx, label] = await Promise.all([
+      upstream.opportunityByAgeb(cveMun, giro.scian),
+      // Reuse the scoping context when the address resolved into the same
+      // municipio the picker named (audit I1) — the common case.
+      scopeCtx && municipio === cveMun
+        ? Promise.resolve(scopeCtx)
+        : muniContext(cveMun),
+      // colonias[0] is the DOMINANT colonia — upstream orders by
+      // COUNT(*) DESC. Its spelling exactly matches opportunity-by-colonia
+      // rows: all three endpoints derive UPPER(TRIM(colonia)) from the same
+      // establecimientos column, so the exact match below cannot drift
+      // (audit W3/I3 — verified against upstream SQL, do not accent-fold:
+      // folding would falsely merge distinct colonias like PEÑA/PENA).
+      upstream
+        .coloniasByAgeb(resolved.cvegeo)
+        .then((r) => r.colonias[0]?.colonia ?? null)
+        .catch(() => null),
+    ]);
+
+    const rows = agebs.agebs.filter((a) => a.pobtot !== null);
+    const row = rows.find((a) => a.cvegeo === resolved.cvegeo);
+
+    let veredicto: Veredicto | null = null;
+    let grano: "zona" | "colonia" = "zona";
+    if (row) {
+      veredicto = evaluar({
+        giro,
+        comp: row.target_count,
+        actividadPercentil: percentil(
+          row.pobtot!,
+          rows.map((a) => a.pobtot!),
+        ),
+        pobrezaPct: ctx.pobrezaPct,
+        riesgoPercentil: ctx.riesgoPercentil,
+        rezagoGrado: isRezagoGrado(row.rezago_grado) ? row.rezago_grado : null,
+        competenciaGrain: "zona",
+      });
+    } else if (label) {
+      // AGEB outside the top-100-by-population set: degrade honestly to
+      // the colonia-grain verdict via the AGEB's colonia label.
+      grano = "colonia";
+      const { rows: cRows, actividadValues } = await coloniaRows(
+        giroId,
+        cveMun,
+      );
+      const cRow = cRows.find(
+        (r) => normalizeColonia(r.colonia) === normalizeColonia(label),
+      );
+      if (cRow) {
+        veredicto = evaluar({
+          giro,
+          comp: cRow.target_count,
+          actividadPercentil: percentil(cRow.total_estab, actividadValues),
+          pobrezaPct: ctx.pobrezaPct,
+          riesgoPercentil: ctx.riesgoPercentil,
+        });
+      }
+    }
+    if (!veredicto) {
+      return c.json(
+        {
+          ok: false,
+          error:
+            "Ubicamos tu dirección, pero la zona no tiene suficiente actividad registrada para un veredicto honesto.",
+        },
+        404,
+      );
+    }
+
+    c.header("Cache-Control", "public, max-age=300");
+    return c.json({
+      ok: true,
+      giro: {
+        id: giro.id,
+        label: giro.label,
+        emoji: giro.emoji,
+        precio: giro.precio,
+      },
+      lugar: {
+        municipio: cveMun,
+        municipioNombre: ctx.municipioNombre,
+        colonia: label ?? "tu zona",
+        direccion: geoResult.displayName,
+        grano,
       },
       veredicto,
     });

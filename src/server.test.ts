@@ -4,12 +4,15 @@ import { makeApp } from "./server.js";
 import { LIMITS, RateLimiter } from "./rate-limit.js";
 import type { Upstream } from "./upstream.js";
 import { UpstreamError } from "./upstream.js";
+import type { Geocoder } from "./geocoder.js";
 
 const CONFIG: BffConfig = {
   port: 0,
   upstreamUrl: "http://up.test",
   upstreamApiKey: "k",
   webDist: "./web/dist",
+  nominatimUrl: "http://nominatim.test",
+  nominatimUserAgent: "test-agent",
 };
 
 /** Colonia fixtures: activity spread so percentiles are meaningful. */
@@ -140,6 +143,13 @@ function makeUpstreamMock(): Upstream {
         colonias: label ? [{ colonia: label, num_establecimientos: 200 }] : [],
       };
     }),
+    resolveAgeb: vi.fn(async () => ({
+      lat: 20.6656,
+      lon: -103.4058,
+      cvegeo: "1403900010101",
+      ambito: "Urbana",
+      cve_mun: "14039",
+    })),
     riskSummary: vi.fn(async () => ({
       entidad: "14",
       municipios: [
@@ -151,14 +161,32 @@ function makeUpstreamMock(): Upstream {
   } as unknown as Upstream;
 }
 
-function makeTestApp(upstream = makeUpstreamMock()) {
+function makeGeocoderMock(): Geocoder {
+  return {
+    search: vi.fn(async () => ({
+      lat: 20.6656,
+      lon: -103.4058,
+      displayName:
+        "Av. de las Rosas 500, Chapalita, Guadalajara, Jalisco, México",
+    })),
+  } as unknown as Geocoder;
+}
+
+function makeTestApp(
+  upstream = makeUpstreamMock(),
+  geocoder = makeGeocoderMock(),
+) {
   // Generous limiters so route tests never trip 429 accidentally.
   const limiters = {
     general: new RateLimiter({ windowMs: 60_000, max: 10_000 }),
     verdict: new RateLimiter({ windowMs: 60_000, max: 10_000 }),
     explore: new RateLimiter({ windowMs: 60_000, max: 10_000 }),
   };
-  return { app: makeApp({ config: CONFIG, upstream, limiters }), upstream };
+  return {
+    app: makeApp({ config: CONFIG, upstream, geocoder, limiters }),
+    upstream,
+    geocoder,
+  };
 }
 
 describe("GET /api/estados", () => {
@@ -436,6 +464,109 @@ describe("GET /api/giros", () => {
     });
     expect(JSON.stringify(body)).not.toContain("464111");
     expect(JSON.stringify(body)).not.toContain("tolerancia");
+  });
+});
+
+describe("GET /api/verdict-direccion", () => {
+  it("resolves address → AGEB → zone-grain verdict with zone rezago", async () => {
+    const { app, upstream, geocoder } = makeTestApp();
+    const res = await app.request(
+      "/api/verdict-direccion?giro=farmacia&direccion=Av.%20de%20las%20Rosas%20500&municipio=14039",
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    // resolved AGEB 0101: comp=1, rezago Muy bajo → poder zone-grain
+    expect(body.lugar.grano).toBe("zona");
+    expect(body.lugar.colonia).toBe("AMERICANA");
+    expect(body.lugar.direccion).toMatch(/Av\. de las Rosas/);
+    expect(body.veredicto.competencia.grain).toBe("zona");
+    expect(body.veredicto.poder.grain).toBe("zona");
+    expect(body.veredicto.poder.nivel).toBe(85); // Muy bajo rezago
+    // scoping: geocode query carries the muni name, resolve got real coords
+    expect(
+      (geocoder.search as ReturnType<typeof vi.fn>).mock.calls[0]![0],
+    ).toContain("Guadalajara");
+    expect(upstream.resolveAgeb).toHaveBeenCalledWith(20.6656, -103.4058);
+    // no raw keys leak
+    expect(JSON.stringify(body)).not.toContain("cvegeo");
+  });
+
+  it("falls back to colonia grain when the AGEB is outside the top-100 set", async () => {
+    const upstream = makeUpstreamMock();
+    (upstream.resolveAgeb as ReturnType<typeof vi.fn>).mockResolvedValue({
+      lat: 20.6,
+      lon: -103.4,
+      cvegeo: "1403900019999", // not in opportunityByAgeb mock rows
+      ambito: "Urbana",
+      cve_mun: "14039",
+    });
+    (upstream.coloniasByAgeb as ReturnType<typeof vi.fn>).mockResolvedValue({
+      cvegeo: "1403900019999",
+      colonias: [{ colonia: "CENTRO", num_establecimientos: 300 }],
+    });
+    const { app } = makeTestApp(upstream);
+    const body = await (
+      await app.request(
+        "/api/verdict-direccion?giro=farmacia&direccion=Calle%20Falsa%20123",
+      )
+    ).json();
+    expect(body.ok).toBe(true);
+    expect(body.lugar.grano).toBe("colonia");
+    expect(body.lugar.colonia).toBe("CENTRO");
+    expect(body.veredicto.competencia.grain).toBe("colonia");
+  });
+
+  it("404s honestly when the address does not geocode", async () => {
+    const geocoder = {
+      search: vi.fn(async () => null),
+    } as unknown as Geocoder;
+    const { app } = makeTestApp(makeUpstreamMock(), geocoder);
+    const res = await app.request(
+      "/api/verdict-direccion?giro=farmacia&direccion=xxxxx%20yyyyy",
+    );
+    expect(res.status).toBe(404);
+    expect((await res.json()).error).toMatch(/No encontramos esa dirección/);
+  });
+
+  it("502s when the geocoder is down (distinct from no-match)", async () => {
+    const geocoder = {
+      search: vi.fn(async () => {
+        throw new Error("timeout");
+      }),
+    } as unknown as Geocoder;
+    const { app } = makeTestApp(makeUpstreamMock(), geocoder);
+    const res = await app.request(
+      "/api/verdict-direccion?giro=farmacia&direccion=Av.%20Chapultepec%20480",
+    );
+    expect(res.status).toBe(502);
+    expect((await res.json()).error).toMatch(/no está disponible/);
+  });
+
+  it("404s honestly when the point falls outside every AGEB", async () => {
+    const upstream = makeUpstreamMock();
+    (upstream.resolveAgeb as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    const { app } = makeTestApp(upstream);
+    const res = await app.request(
+      "/api/verdict-direccion?giro=farmacia&direccion=Rancho%20Perdido%20s/n",
+    );
+    expect(res.status).toBe(404);
+    expect((await res.json()).error).toMatch(/zonas censadas/);
+  });
+
+  it("validates giro and direccion length", async () => {
+    const { app } = makeTestApp();
+    expect(
+      (
+        await app.request(
+          "/api/verdict-direccion?giro=nope&direccion=Calle%201234",
+        )
+      ).status,
+    ).toBe(400);
+    expect(
+      (await app.request("/api/verdict-direccion?giro=farmacia&direccion=ab"))
+        .status,
+    ).toBe(400);
   });
 });
 
