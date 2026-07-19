@@ -1,37 +1,83 @@
 # Uncharted Lite
 
-Self-serve, low-ticket site-selection tool for Mexican micro-entrepreneurs — the
+Self-serve, low-ticket site-selection for Mexican micro-entrepreneurs — the
 person about to open their first farmacia, tiendita, or ferretería. Consumer
-long-tail spin-off of the EurekaMS Territory Ops pillar; ships under its own
-brand, **Uncharted** (sister to EurekaMS).
+long-tail spin-off of the EurekaMS Territory Ops pillar, shipped under its own
+brand, **Uncharted**.
+
+**Demo (Phase 1, live data):** <https://lite-demo.187.77.25.101.nip.io/> —
+temporary nip.io host; the product will ship on its own commercial domain.
 
 Two modes, one funnel:
 
-- **Explore** ("no sé dónde abrir") — free. Pick a giro + area, get a ranked
-  list of zones by opportunity.
+- **Explore** ("no sé dónde abrir") — free. Pick a giro + city, get zones
+  ranked by opportunity from live DENUE/Censo/CONEVAL/SESNSP data.
 - **Validate** ("ya tengo un local en mente") — the paid moment. Pick a giro +
-  location, get the verdict _before signing the lease_. Verdict + competition
-  factor free; full report (demand, buying power, risk, recommendation) paid
-  per giro.
+  colonia, get the verdict _before signing the lease_. Verdict + competition
+  factor free; full report (demand, buying power, risk, recommendation) gated
+  per giro ($199–$349 MXN).
 
 The verdict is a semáforo — **Va / Aguas / Mejor no** — a signal, not false
 precision. Zero jargon: the user never sees "AGEB" or "SCIAN".
 
-## Status
+## Architecture
 
-**Prototype stage.** `prototype/uncharted-lite-v2.html` is a self-contained
-single-file demo (open in any browser) that defines UX, brand, copy, and the
-funnel with demo data for Guadalajara. Demo data objects mirror the shape the
-real BFF will serve, so wiring is a drop-in.
+```
+browser ── https ── Caddy (lite-demo.…nip.io, overwrites X-Forwarded-For)
+                      │
+                      ▼
+        BFF  (Hono, 127.0.0.1:8096, tsx)          ← this repo, src/
+        · holds the upstream X-Api-Key (.env — never reaches the client)
+        · exposes ONLY cooked endpoints, serves the built SPA
+        · per-IP rate limits: 30/min general, 10/min verdict+explore
+        · semáforo thresholds + verdict engine live here, server-side
+                      │
+                      ▼
+        México Uncharted API (eurekamd-denue-analysis, 127.0.0.1:3030)
+        · DENUE 6.1M establishments × Censo × CONEVAL × SESNSP …
+```
 
-Phase 1 (next): Vite + React + Tailwind app plus a thin Hono BFF that holds the
-`X-Api-Key` for the México Uncharted backend
-([`eurekamd-denue-analysis`](https://github.com/EurekaMD-net/eurekamd-denue-analysis),
-live at `uncharted.eurekamd.cloud`), exposes only cooked endpoints (location
-cascade, giro list, verdict), and normalizes verdicts to the semáforo
-server-side. Raw warehouse rows never reach the browser.
+Security stance mirrors `intelligence-ops-mcp`: bounded read-only surface,
+never pass-through. Raw warehouse rows never cross the wire — the competitor
+count and the semáforo do. The cascade is bounded to launched metros
+(`ESTADOS_ACTIVOS` / `MUNICIPIOS_ACTIVOS` in `src/config.ts`), so the public
+surface cannot fan out the national warehouse.
 
-## Giro → SCIAN map (verified against live DENUE, 2026-07-19)
+## BFF surface (everything the browser can reach)
+
+| Route                 | Params                     | Returns                                                  |
+| --------------------- | -------------------------- | -------------------------------------------------------- |
+| `GET /api/health`     | —                          | liveness                                                 |
+| `GET /api/giros`      | —                          | `{id,label,emoji,precio}` — no SCIAN, no tuning          |
+| `GET /api/estados`    | —                          | 32 states + `activo` flag                                |
+| `GET /api/municipios` | `estado`                   | municipios + `activo` (inactive states → `proximamente`) |
+| `GET /api/colonias`   | `municipio`                | colonia names (top 200 by activity, noise-filtered)      |
+| `GET /api/verdict`    | `giro, municipio, colonia` | semáforo + 4 factors + recommendation                    |
+| `GET /api/explore`    | `giro, municipio`          | top 12 zones ranked by the same engine                   |
+
+Unknown `/api/*` → JSON 404. Everything else serves the SPA (`web/dist`).
+
+## Verdict engine (Phase 1 grains — labeled honestly in the UI)
+
+- **Competencia** (colonia): `target_count` from `opportunity-by-colonia`.
+  Saturation is relative to what each giro tolerates (`tolerancia` in
+  `src/giros.ts`), not a flat per-competitor penalty.
+- **Gente y demanda** (zona): colonia activity percentile within the municipio.
+- **Poder de compra** (ciudad): CONEVAL `pobreza_pct`, weighted per giro
+  (`pesoPoder`).
+- **Riesgo** (ciudad): SESNSP per-1k percentile within the entidad. Displayed
+  as a factor but deliberately NOT in the score — muni-grain risk is constant
+  across every zone of a city, so it would shift the whole distribution
+  without changing any ranking. Revisit with zone-grain risk in Phase 2.
+- **Honesty rule in code:** 0 competitors can never produce verde (caps at 62,
+  "campo libre") — an empty field can mean nobody wants that giro there.
+
+Thresholds: verde ≥66, amber ≥42 — one place, `src/engine.ts`.
+
+## Giro → SCIAN config
+
+One module: `src/giros.ts` — adding a giro touches no UI logic. Codes verified
+against live DENUE `clase_actividad_id` (2026-07-19):
 
 | Giro                    | SCIAN clase     | National count  |
 | ----------------------- | --------------- | --------------- |
@@ -42,9 +88,45 @@ server-side. Raw warehouse rows never reach the browser.
 | Cafetería               | 722515          | 81,283          |
 | Estética / Salón        | 812110          | 295,942         |
 
-## Backend dependency (Phase 2)
+## Setup
 
-Free-text address validation needs a new backend endpoint on
+```bash
+npm install && (cd web && npm install)
+cp env.example .env         # fill UNCHARTED_API_KEY (upstream X-Api-Key)
+(cd web && npm run build)   # SPA → web/dist, served by the BFF
+npm run serve               # 127.0.0.1:8096 (must run from repo root)
+```
+
+Tests / typecheck:
+
+```bash
+npx tsc --noEmit && (cd web && npx tsc --noEmit)
+npx vitest run src/engine.test.ts src/rate-limit.test.ts src/upstream.test.ts src/server.test.ts
+```
+
+Dev: `npm run dev` (BFF) + `cd web && npm run dev` (Vite on 5173, proxies `/api`).
+
+## Deploy (VPS)
+
+- systemd: `ops/uncharted-lite.service` → `systemctl restart uncharted-lite`,
+  logs `journalctl -u uncharted-lite -f`. tsx runtime — source edits take
+  effect on restart; **rebuild `web/dist` for frontend changes**.
+- Caddy: `ops/Caddyfile.lite-demo` (appended to `/etc/caddy/Caddyfile`).
+  The `header_up X-Forwarded-For {remote_host}` overwrite is load-bearing:
+  the BFF rate limiter keys on the last XFF hop and assumes exactly one
+  trusted proxy. Keep it when moving to the commercial domain.
+
+## Known Phase-1 limitations (accepted)
+
+- **Paywall is client-side only.** The full report crosses the wire on
+  `/api/verdict`; DevTools reveals it. Server-side gating arrives with
+  payments (out of scope this pass) — the endpoint split is ready for it.
+- **Poder/riesgo are muni-grain.** Zone-grain arrives with the AGEB resolve
+  (below).
+
+## Phase 2 backend dependency: `/resolve/ageb`
+
+Free-text address validation needs a new endpoint on
 `eurekamd-denue-analysis`:
 
 ```
@@ -53,5 +135,16 @@ GET /resolve/ageb?lat=&lon=
 → { cvegeo, ambito, cve_mun }
 ```
 
-Colonia is a free-text label in DENUE (no geometry), so it can drive menus but
-never point-in-polygon — address resolution must land on AGEB.
+Colonia is a free-text label in DENUE (no geometry) — fine for menus, unusable
+for point-in-polygon. Address resolution must land on AGEB. Geocoder pick:
+self-hosted Nominatim with a Mexico OSM extract (≈$0/call); Google Geocoding
+($5/1k) only as a paid-flow fallback if accuracy demands it.
+
+## Repo layout
+
+```
+src/         BFF (Hono + tsx): config, giros, upstream client, engine, rate limit, server
+web/         Vite + React 18 + Tailwind SPA (brand system in web/src/index.css)
+prototype/   v2 single-file HTML prototype that defined UX/copy (kept as spec)
+ops/         systemd unit + Caddy block snapshots
+```

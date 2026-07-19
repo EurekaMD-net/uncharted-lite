@@ -1,0 +1,16 @@
+[Unit]
+Description=Uncharted Lite BFF (demo) — cooked site-selection API + SPA on 127.0.0.1:8096
+After=network.target denue-analyzer.service
+Wants=denue-analyzer.service
+
+[Service]
+Type=simple
+WorkingDirectory=/root/claude/uncharted-lite
+ExecStart=/usr/bin/npx tsx --env-file=.env src/serve.ts
+Restart=always
+RestartSec=5
+Environment=TZ=America/Mexico_City
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target

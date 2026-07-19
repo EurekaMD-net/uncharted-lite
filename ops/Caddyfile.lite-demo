@@ -1,0 +1,15 @@
+# Uncharted Lite — consumer demo (own commercial domain later; nip.io for now)
+lite-demo.187.77.25.101.nip.io {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+	reverse_proxy localhost:8096 {
+		# Overwrite (not append) so the BFF rate limiter keys on the real
+		# peer — a client-supplied X-Forwarded-For must never survive.
+		header_up X-Forwarded-For {remote_host}
+	}
+}
