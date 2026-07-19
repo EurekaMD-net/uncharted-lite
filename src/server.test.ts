@@ -63,6 +63,83 @@ function makeUpstreamMock(): Upstream {
       cve_mun: "14039",
       colonias: OPP_ROWS,
     })),
+    // AGEB explore path: two labeled AGEBs sharing one colonia (dedupe case)
+    // plus one below the population floor and one that fails to label.
+    opportunityByAgeb: vi.fn(async () => ({
+      cve_mun: "14039",
+      agebs: [
+        {
+          cvegeo: "1403900010101",
+          ambito: "Urbana",
+          pobtot: 8000,
+          target_count: 1,
+          total_estab: 400,
+          score: 8000,
+          rezago_grado: "Muy bajo",
+        },
+        {
+          cvegeo: "1403900010102",
+          ambito: "Urbana",
+          pobtot: 6000,
+          target_count: 0,
+          total_estab: 300,
+          score: null,
+          rezago_grado: "Bajo",
+        },
+        {
+          cvegeo: "1403900010103",
+          ambito: "Urbana",
+          pobtot: 5000,
+          target_count: 4,
+          total_estab: 350,
+          score: 1250,
+          rezago_grado: "Medio",
+        },
+        {
+          cvegeo: "1403900010105",
+          ambito: "Urbana",
+          pobtot: 4500,
+          target_count: 2,
+          total_estab: 280,
+          score: 2250,
+          rezago_grado: "Alto",
+        },
+        {
+          cvegeo: "1403900010106",
+          ambito: "Urbana",
+          pobtot: 4200,
+          target_count: 1,
+          total_estab: 260,
+          score: 4200,
+          rezago_grado: "Medio",
+        },
+        {
+          cvegeo: "1403900010104",
+          ambito: "Urbana",
+          pobtot: 100,
+          target_count: 0,
+          total_estab: 10,
+          score: null,
+          rezago_grado: null,
+        },
+      ],
+    })),
+    coloniasByAgeb: vi.fn(async (cvegeo: string) => {
+      // 0101+0102 share AMERICANA (dedupe case); 0103 is unlabeled and must
+      // be skipped — never shown as a raw cvegeo.
+      const labels: Record<string, string | null> = {
+        "1403900010101": "AMERICANA",
+        "1403900010102": "AMERICANA",
+        "1403900010103": null,
+        "1403900010105": "OBLATOS",
+        "1403900010106": "SANTA TERE",
+      };
+      const label = labels[cvegeo] ?? null;
+      return {
+        cvegeo,
+        colonias: label ? [{ colonia: label, num_establecimientos: 200 }] : [],
+      };
+    }),
     riskSummary: vi.fn(async () => ({
       entidad: "14",
       municipios: [
@@ -79,23 +156,21 @@ function makeTestApp(upstream = makeUpstreamMock()) {
   const limiters = {
     general: new RateLimiter({ windowMs: 60_000, max: 10_000 }),
     verdict: new RateLimiter({ windowMs: 60_000, max: 10_000 }),
+    explore: new RateLimiter({ windowMs: 60_000, max: 10_000 }),
   };
   return { app: makeApp({ config: CONFIG, upstream, limiters }), upstream };
 }
 
 describe("GET /api/estados", () => {
-  it("cooks upstream entidades with activo flags", async () => {
+  it("returns all 32-list entidades, every one active (national coverage)", async () => {
     const { app } = makeTestApp();
     const res = await app.request("/api/estados");
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.ok).toBe(true);
-    const jalisco = body.estados.find(
-      (e: { clave: string }) => e.clave === "14",
-    );
-    const cdmx = body.estados.find((e: { clave: string }) => e.clave === "09");
-    expect(jalisco.activo).toBe(true);
-    expect(cdmx.activo).toBe(false);
+    expect(
+      body.estados.every((e: { activo: boolean }) => e.activo === true),
+    ).toBe(true);
   });
 });
 
@@ -106,43 +181,68 @@ describe("GET /api/municipios", () => {
     expect((await app.request("/api/municipios")).status).toBe(400);
   });
 
-  it("returns proximamente for inactive estados WITHOUT hitting upstream", async () => {
+  it("serves ANY valid estado from upstream — no próximamente gate", async () => {
     const { app, upstream } = makeTestApp();
-    const res = await app.request("/api/municipios?estado=09");
-    const body = await res.json();
-    expect(body.proximamente).toBe(true);
-    expect(body.municipios).toEqual([]);
-    expect(upstream.municipios).not.toHaveBeenCalled();
+    const body = await (await app.request("/api/municipios?estado=09")).json();
+    expect(body.proximamente).toBeUndefined();
+    expect(upstream.municipios).toHaveBeenCalledWith("09");
+    expect(body.municipios.length).toBeGreaterThan(0);
   });
 
-  it("cooks municipios for active estado with activo flags, sorted", async () => {
+  it("drops nameless warehouse-noise rows (e.g. cve 19999)", async () => {
+    const upstream = makeUpstreamMock();
+    (upstream.municipios as ReturnType<typeof vi.fn>).mockResolvedValue({
+      entidad: "19",
+      municipios: [
+        {
+          cve_mun: "19039",
+          municipio: "Monterrey",
+          poblacion: 1,
+          establecimientos: 1,
+          pobreza_pct: null,
+          irs_grado: null,
+        },
+        {
+          cve_mun: "19999",
+          municipio: null,
+          poblacion: null,
+          establecimientos: 1,
+          pobreza_pct: null,
+          irs_grado: null,
+        },
+      ],
+    });
+    const { app } = makeTestApp(upstream);
+    const body = await (await app.request("/api/municipios?estado=19")).json();
+    expect(body.municipios).toHaveLength(1);
+    expect(body.municipios[0].nombre).toBe("Monterrey");
+  });
+
+  it("cooks municipios sorted, all active", async () => {
     const { app } = makeTestApp();
     const body = await (await app.request("/api/municipios?estado=14")).json();
     expect(body.municipios.map((m: { nombre: string }) => m.nombre)).toEqual([
       "Guadalajara",
       "Zapopan",
     ]);
-    expect(body.municipios[0].activo).toBe(true);
-    expect(body.municipios[1].activo).toBe(false);
+    expect(
+      body.municipios.every((m: { activo: boolean }) => m.activo === true),
+    ).toBe(true);
   });
 });
 
 describe("GET /api/colonias", () => {
-  it("validates municipio and gates inactive ones", async () => {
-    const { app, upstream } = makeTestApp();
+  it("validates municipio shape", async () => {
+    const { app } = makeTestApp();
     expect((await app.request("/api/colonias?municipio=abc")).status).toBe(400);
+  });
+
+  it("serves any municipio, alphabetized, dropping low-activity noise", async () => {
+    const { app, upstream } = makeTestApp();
     const body = await (
       await app.request("/api/colonias?municipio=14120")
     ).json();
-    expect(body.proximamente).toBe(true);
-    expect(upstream.colonias).not.toHaveBeenCalled();
-  });
-
-  it("returns alphabetized names, dropping low-activity noise", async () => {
-    const { app } = makeTestApp();
-    const body = await (
-      await app.request("/api/colonias?municipio=14039")
-    ).json();
+    expect(upstream.colonias).toHaveBeenCalledWith("14120");
     expect(body.colonias).toEqual(["AMERICANA", "CENTRO"]); // CHIQUITA filtered
   });
 });
@@ -155,12 +255,9 @@ describe("GET /api/verdict", () => {
         .status,
     ).toBe(400);
     expect(
-      (
-        await app.request(
-          "/api/verdict?giro=farmacia&municipio=14120&colonia=X",
-        )
-      ).status,
-    ).toBe(403);
+      (await app.request("/api/verdict?giro=farmacia&municipio=1&colonia=X"))
+        .status,
+    ).toBe(400);
     expect(
       (await app.request("/api/verdict?giro=farmacia&municipio=14039&colonia="))
         .status,
@@ -230,7 +327,7 @@ describe("GET /api/verdict", () => {
 });
 
 describe("GET /api/explore", () => {
-  it("returns ranked zones sorted by score, capped, without raw rows", async () => {
+  it("uses the AGEB path: colonia labels, habitantes, dedupe, no cvegeo leak", async () => {
     const { app } = makeTestApp();
     const res = await app.request("/api/explore?giro=farmacia&municipio=14039");
     expect(res.status).toBe(200);
@@ -239,35 +336,70 @@ describe("GET /api/explore", () => {
     expect(body.municipioNombre).toBe("Guadalajara");
     const scores = body.zonas.map((z: { score: number }) => z.score);
     expect([...scores].sort((a: number, b: number) => b - a)).toEqual(scores);
-    // null-colonia and below-threshold rows excluded
     const names = body.zonas.map((z: { colonia: string }) => z.colonia);
-    expect(names).not.toContain("CHIQUITA");
-    expect(names).not.toContain(null);
-    // greenfield zone is present but flagged, never verde
+    // two AGEBs share AMERICANA → ONE zone with AGGREGATED competitors and
+    // population (not the rosiest single AGEB — audit W2)
+    expect(names.filter((n: string) => n === "AMERICANA")).toHaveLength(1);
+    const americana = body.zonas.find(
+      (z: { colonia: string }) => z.colonia === "AMERICANA",
+    );
+    expect(americana.comp).toBe(1); // 1 + 0 across its two AGEBs
+    expect(americana.habitantes).toBe(14000); // 8000 + 6000
+    expect(names).toEqual(
+      expect.arrayContaining(["AMERICANA", "OBLATOS", "SANTA TERE"]),
+    );
+    // real population crosses the wire rounded, raw AGEB keys never do
+    expect(body.zonas[0].habitantes % 100).toBe(0);
+    expect(JSON.stringify(body)).not.toContain("cvegeo");
+    expect(JSON.stringify(body)).not.toContain("14039000101");
+  });
+
+  it("falls back to colonia grain when AGEB zones are too few", async () => {
+    const upstream = makeUpstreamMock();
+    (upstream.opportunityByAgeb as ReturnType<typeof vi.fn>).mockResolvedValue({
+      cve_mun: "14039",
+      agebs: [],
+    });
+    const { app } = makeTestApp(upstream);
+    const body = await (
+      await app.request("/api/explore?giro=farmacia&municipio=14039")
+    ).json();
+    const names = body.zonas.map((z: { colonia: string }) => z.colonia);
+    expect(names).toContain("CENTRO"); // colonia-grain dataset
+    expect(names).not.toContain("CHIQUITA"); // noise floor still applies
     const green = body.zonas.find((z: { comp: number }) => z.comp === 0);
     expect(green.luz).not.toBe("verde");
   });
 
-  it("gates inactive municipios", async () => {
+  it("serves any valid municipio — no metro gate", async () => {
     const { app } = makeTestApp();
     expect(
       (await app.request("/api/explore?giro=cafe&municipio=14120")).status,
-    ).toBe(403);
+    ).toBe(200);
   });
 });
 
 describe("rate limiting", () => {
-  it("429s the verdict bucket after its limit, general endpoints unaffected", async () => {
+  it("429s the explore bucket after its limit; verdict and general have their own budgets", async () => {
     const upstream = makeUpstreamMock();
     const limiters = {
       general: new RateLimiter(LIMITS.general),
-      verdict: new RateLimiter({ windowMs: 60_000, max: 2 }),
+      verdict: new RateLimiter(LIMITS.verdict),
+      explore: new RateLimiter({ windowMs: 60_000, max: 2 }),
     };
     const app = makeApp({ config: CONFIG, upstream, limiters });
     const q = "/api/explore?giro=farmacia&municipio=14039";
     expect((await app.request(q)).status).toBe(200);
     expect((await app.request(q)).status).toBe(200);
     expect((await app.request(q)).status).toBe(429);
+    // explore exhaustion must not consume verdict or general budgets
+    expect(
+      (
+        await app.request(
+          "/api/verdict?giro=farmacia&municipio=14039&colonia=AMERICANA",
+        )
+      ).status,
+    ).toBe(200);
     expect((await app.request("/api/giros")).status).toBe(200);
   });
 
@@ -275,7 +407,8 @@ describe("rate limiting", () => {
     const upstream = makeUpstreamMock();
     const limiters = {
       general: new RateLimiter(LIMITS.general),
-      verdict: new RateLimiter({ windowMs: 60_000, max: 1 }),
+      verdict: new RateLimiter(LIMITS.verdict),
+      explore: new RateLimiter({ windowMs: 60_000, max: 1 }),
     };
     const app = makeApp({ config: CONFIG, upstream, limiters });
     const q = "/api/explore?giro=farmacia&municipio=14039";
@@ -303,6 +436,25 @@ describe("GET /api/giros", () => {
     });
     expect(JSON.stringify(body)).not.toContain("464111");
     expect(JSON.stringify(body)).not.toContain("tolerancia");
+  });
+});
+
+describe("small-town relief floor", () => {
+  it("keeps sub-25 colonias when a rural muni has nothing above the floor", async () => {
+    const upstream = makeUpstreamMock();
+    (upstream.colonias as ReturnType<typeof vi.fn>).mockResolvedValue({
+      cve_mun: "08008",
+      colonias: [
+        { colonia: "CENTRO", num_establecimientos: 12 },
+        { colonia: "LA MESA", num_establecimientos: 6 },
+        { colonia: "SOLITARIA", num_establecimientos: 2 }, // below hard minimum
+      ],
+    });
+    const { app } = makeTestApp(upstream);
+    const body = await (
+      await app.request("/api/colonias?municipio=08008")
+    ).json();
+    expect(body.colonias).toEqual(["CENTRO", "LA MESA"]);
   });
 });
 

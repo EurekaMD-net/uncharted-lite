@@ -29,7 +29,7 @@ browser ── https ── Caddy (lite-demo.…nip.io, overwrites X-Forwarded-F
         BFF  (Hono, 127.0.0.1:8096, tsx)          ← this repo, src/
         · holds the upstream X-Api-Key (.env — never reaches the client)
         · exposes ONLY cooked endpoints, serves the built SPA
-        · per-IP rate limits: 30/min general, 10/min verdict+explore
+        · per-IP rate limits: 30/min general, 10/min verdict, 6/min explore
         · semáforo thresholds + verdict engine live here, server-side
                       │
                       ▼
@@ -39,21 +39,23 @@ browser ── https ── Caddy (lite-demo.…nip.io, overwrites X-Forwarded-F
 
 Security stance mirrors `intelligence-ops-mcp`: bounded read-only surface,
 never pass-through. Raw warehouse rows never cross the wire — the competitor
-count and the semáforo do. The cascade is bounded to launched metros
-(`ESTADOS_ACTIVOS` / `MUNICIPIOS_ACTIVOS` in `src/config.ts`), so the public
-surface cannot fan out the national warehouse.
+count and the semáforo do. **Coverage is national** (operator ruling
+2026-07-19: all 32 estados, every municipio; the original single-metro gate
+is gone) — the scrape gates are the per-IP rate limits, the cooked-endpoint
+boundary, and Explore's bounded label-lookup budget (≤20 upstream lookups per
+cold municipio, cached 1h).
 
 ## BFF surface (everything the browser can reach)
 
-| Route                 | Params                     | Returns                                                  |
-| --------------------- | -------------------------- | -------------------------------------------------------- |
-| `GET /api/health`     | —                          | liveness                                                 |
-| `GET /api/giros`      | —                          | `{id,label,emoji,precio}` — no SCIAN, no tuning          |
-| `GET /api/estados`    | —                          | 32 states + `activo` flag                                |
-| `GET /api/municipios` | `estado`                   | municipios + `activo` (inactive states → `proximamente`) |
-| `GET /api/colonias`   | `municipio`                | colonia names (top 200 by activity, noise-filtered)      |
-| `GET /api/verdict`    | `giro, municipio, colonia` | semáforo + 4 factors + recommendation                    |
-| `GET /api/explore`    | `giro, municipio`          | top 12 zones ranked by the same engine                   |
+| Route                 | Params                     | Returns                                                                                                           |
+| --------------------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `GET /api/health`     | —                          | liveness                                                                                                          |
+| `GET /api/giros`      | —                          | `{id,label,emoji,precio}` — no SCIAN, no tuning                                                                   |
+| `GET /api/estados`    | —                          | all 32 states, all active                                                                                         |
+| `GET /api/municipios` | `estado`                   | every municipio of the estado (nameless noise rows dropped)                                                       |
+| `GET /api/colonias`   | `municipio`                | colonia names (top 200 by activity; small-town relief floor for rural munis)                                      |
+| `GET /api/verdict`    | `giro, municipio, colonia` | semáforo + 4 factors + recommendation (colonia grain)                                                             |
+| `GET /api/explore`    | `giro, municipio`          | top 12 zones — AGEB grain aggregated per colonia label, with `habitantes`; colonia-grain fallback for rural munis |
 
 Unknown `/api/*` → JSON 404. Everything else serves the SPA (`web/dist`).
 
@@ -63,8 +65,10 @@ Unknown `/api/*` → JSON 404. Everything else serves the SPA (`web/dist`).
   Saturation is relative to what each giro tolerates (`tolerancia` in
   `src/giros.ts`), not a flat per-competitor penalty.
 - **Gente y demanda** (zona): colonia activity percentile within the municipio.
+  In Explore's AGEB path this upgrades to real Censo population percentile.
 - **Poder de compra** (ciudad): CONEVAL `pobreza_pct`, weighted per giro
-  (`pesoPoder`).
+  (`pesoPoder`). In Explore's AGEB path this upgrades to zone-grain CONEVAL
+  rezago social (5 ordinal levels, labeled "en la zona").
 - **Riesgo** (ciudad): SESNSP per-1k percentile within the entidad. Displayed
   as a factor but deliberately NOT in the score — muni-grain risk is constant
   across every zone of a city, so it would shift the whole distribution
@@ -121,8 +125,16 @@ Dev: `npm run dev` (BFF) + `cd web && npm run dev` (Vite on 5173, proxies `/api`
 - **Paywall is client-side only.** The full report crosses the wire on
   `/api/verdict`; DevTools reveals it. Server-side gating arrives with
   payments (out of scope this pass) — the endpoint split is ready for it.
-- **Poder/riesgo are muni-grain.** Zone-grain arrives with the AGEB resolve
-  (below).
+- **Explore vs Validate grain gap.** Explore scores a colonia label from the
+  aggregate of its populous AGEBs (Censo population + rezago); Validate
+  scores the whole colonia from DENUE activity + muni-grain poder. Tapping
+  through can shift the score/luz — both readings are true at their grain.
+  Converges when Validate resolves to AGEB (Phase 2, below).
+- **In Validate, poder/riesgo are muni-grain.** Zone-grain arrives with the
+  AGEB resolve (below). Riesgo is muni-grain everywhere.
+- **Explore's AGEB view covers a muni's top-100 AGEBs by population** —
+  upstream's per-request cap. Smaller zones surface via the colonia
+  fallback and Validate.
 
 ## Phase 2 backend dependency: `/resolve/ageb`
 

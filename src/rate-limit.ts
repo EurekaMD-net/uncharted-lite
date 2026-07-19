@@ -12,6 +12,9 @@ export interface RateLimitConfig {
 export const LIMITS = {
   general: { windowMs: 60_000, max: 30 },
   verdict: { windowMs: 60_000, max: 10 },
+  // Explore fans out to AGEB label lookups upstream (up to ~23 calls on a
+  // cold municipio), so its budget is tighter than verdict's.
+  explore: { windowMs: 60_000, max: 6 },
 } as const satisfies Record<string, RateLimitConfig>;
 
 export class RateLimiter {

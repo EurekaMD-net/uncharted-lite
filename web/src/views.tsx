@@ -123,9 +123,8 @@ export function Home({ set }: Pick<ViewProps, "set">) {
         </button>
       </div>
       <p style={{ fontSize: 13, color: "var(--ink-soft)", margin: "26px 0 0" }}>
-        Empezamos en{" "}
-        <strong style={{ color: "var(--ink)" }}>Guadalajara</strong>. CDMX y
-        Monterrey, próximamente.
+        <strong style={{ color: "var(--ink)" }}>Cobertura nacional</strong> —
+        los 32 estados, todos los municipios de México.
       </p>
     </section>
   );
@@ -357,6 +356,9 @@ function RankingList({
                   ? `ninguna ${giroLabel}`
                   : `${z.comp} ${giroLabel}${z.comp === 1 ? "" : "s"}`}{" "}
                 cerca · gente {z.gente} · riesgo {z.riesgo}
+                {z.habitantes
+                  ? ` · ~${z.habitantes.toLocaleString("es-MX")} vecinos`
+                  : ""}
               </div>
             </div>
             <div className="rank-score">

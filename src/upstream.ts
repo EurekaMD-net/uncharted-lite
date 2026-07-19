@@ -19,7 +19,8 @@ export interface EntidadesResult {
 
 export interface MunicipioRow {
   cve_mun: string;
-  municipio: string;
+  /** Null on warehouse-noise rows (e.g. cve 19999, "municipio unspecified"). */
+  municipio: string | null;
   poblacion: number | null;
   establecimientos: number;
   pobreza_pct: number | null;
@@ -48,6 +49,25 @@ export interface OpportunityColoniaRow {
 export interface OpportunityColoniasResult {
   cve_mun: string;
   colonias: OpportunityColoniaRow[];
+}
+
+export interface OpportunityAgebRow {
+  cvegeo: string;
+  ambito: "Urbana" | "Rural" | null;
+  pobtot: number | null;
+  target_count: number;
+  total_estab: number;
+  score: number | null;
+  rezago_grado: string | null;
+}
+export interface OpportunityAgebsResult {
+  cve_mun: string;
+  agebs: OpportunityAgebRow[];
+}
+
+export interface ColoniasByAgebResult {
+  cvegeo: string;
+  colonias: ColoniaListRow[];
 }
 
 export interface RiskMunicipioRow {
@@ -154,6 +174,30 @@ export class Upstream {
     return this.fetchJson(
       `/analytics/opportunity-by-colonia?cve_mun=${encodeURIComponent(cveMun)}&target_scian=${encodeURIComponent(scian.join(","))}&order_by=total_estab&limit=200`,
       TTL.opportunity,
+    );
+  }
+
+  /**
+   * AGEB-grain opportunity rows for a municipio, biggest population first.
+   * order_by=pobtot (not score): upstream's score sorts greenfield AGEBs
+   * (NULL) last, but a zero-competitor AGEB can be the best zone — we rank
+   * with our own engine after fetching.
+   */
+  opportunityByAgeb(
+    cveMun: string,
+    scian: string[],
+  ): Promise<OpportunityAgebsResult> {
+    return this.fetchJson(
+      `/analytics/opportunity-by-ageb?cve_mun=${encodeURIComponent(cveMun)}&target_scian=${encodeURIComponent(scian.join(","))}&order_by=pobtot&limit=100`,
+      TTL.opportunity,
+    );
+  }
+
+  /** Colonia labels living inside one AGEB (for jargon-free zone naming). */
+  coloniasByAgeb(cvegeo: string): Promise<ColoniasByAgebResult> {
+    return this.fetchJson(
+      `/analytics/colonias-by-ageb?cvegeo=${encodeURIComponent(cvegeo)}`,
+      TTL.colonias,
     );
   }
 

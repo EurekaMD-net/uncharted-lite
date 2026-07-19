@@ -101,6 +101,21 @@ describe("evaluar", () => {
     expect(v.riesgo.frase).toMatch(/tómalo con reserva/);
   });
 
+  it("zone-grain rezago replaces muni pobreza for poder and relabels the grain", () => {
+    const conRezago = evaluar(
+      input({ rezagoGrado: "Muy alto", pobrezaPct: 10 }),
+    );
+    expect(conRezago.poder.nivel).toBe(15); // rezago wins over the rosy muni signal
+    expect(conRezago.poder.grain).toBe("zona");
+    expect(conRezago.poder.frase).toMatch(/cuida cada peso/);
+    const sinRezago = evaluar(input({ rezagoGrado: null, pobrezaPct: 10 }));
+    expect(sinRezago.poder.grain).toBe("ciudad");
+    const rezagoBueno = evaluar(
+      input({ rezagoGrado: "Muy bajo", pobrezaPct: 80 }),
+    );
+    expect(rezagoBueno.poder.nivel).toBe(85);
+  });
+
   it("labels factor grains honestly", () => {
     const v = evaluar(input());
     expect(v.competencia.grain).toBe("colonia");

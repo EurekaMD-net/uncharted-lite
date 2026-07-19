@@ -49,6 +49,8 @@ export interface VerdictResponse {
 
 export interface Zona {
   colonia: string;
+  /** Zone population (rounded to hundreds) when the AGEB path served it. */
+  habitantes: number | null;
   score: number;
   luz: Luz;
   palabra: string;

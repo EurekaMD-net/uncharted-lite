@@ -27,13 +27,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BffConfig {
   };
 }
 
-/**
- * Launched coverage. Only these claves are reachable through the public
- * cascade — everything else is "próximamente". This is deliberate scrape
- * protection: the BFF will not fan out the warehouse beyond launched metros.
- */
-export const ESTADOS_ACTIVOS = new Set(["14"]);
-export const MUNICIPIOS_ACTIVOS = new Set(["14039"]);
-
+// Coverage is NATIONAL (operator ruling 2026-07-19: the single-metro gate in
+// the original brief was misleading — all 32 estados and every municipio are
+// open). Scrape protection now rests on the per-IP rate limits plus the
+// cooked-endpoint boundary: nothing raw ever crosses the wire.
 export const ENTIDAD_RE = /^(0[1-9]|[12][0-9]|3[0-2])$/;
 export const CVE_MUN_RE = /^[0-9]{5}$/;

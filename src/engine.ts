@@ -36,16 +36,24 @@ export interface Veredicto {
   recomendacion: string;
 }
 
+export type RezagoGrado = "Muy bajo" | "Bajo" | "Medio" | "Alto" | "Muy alto";
+
 export interface EngineInput {
   giro: GiroConfig;
-  /** Competitors of the target giro in the colonia. */
+  /** Competitors of the target giro in the zone. */
   comp: number;
-  /** Colonia total activity percentile within the municipio (0-100). */
+  /** Zone activity/population percentile within the municipio (0-100). */
   actividadPercentil: number;
   /** Municipio CONEVAL poverty %, null when the join has no row. */
   pobrezaPct: number | null;
   /** Municipio crime per-1k percentile within its entidad (0-100), null = no data. */
   riesgoPercentil: number | null;
+  /**
+   * Zone-grain CONEVAL rezago social (AGEB explore path). When present it
+   * REPLACES the muni-grain pobreza signal for poder — finer and honest,
+   * so the factor is labeled "en la zona" instead of "en tu ciudad".
+   */
+  rezagoGrado?: RezagoGrado | null;
 }
 
 export const VEREDICTO_META: Record<Luz, { palabra: string; sub: string }> = {
@@ -129,12 +137,33 @@ function nivelPoder(pobrezaPct: number | null): number {
   return clamp(Math.round(100 - pobrezaPct * 1.6), 2, 98);
 }
 
+/** Zone-grain buying power from CONEVAL rezago social (5 ordinal levels). */
+const REZAGO_NIVEL: Record<RezagoGrado, number> = {
+  "Muy bajo": 85,
+  Bajo: 70,
+  Medio: 50,
+  Alto: 30,
+  "Muy alto": 15,
+};
+
+export function isRezagoGrado(v: string | null | undefined): v is RezagoGrado {
+  return v != null && v in REZAGO_NIVEL;
+}
+
+function frasePoderNivel(nivel: number): string {
+  if (nivel >= 66) return "El poder de compra de la zona es alto.";
+  if (nivel >= 42) return "El poder de compra es medio.";
+  return "El poder de compra es bajo — la gente cuida cada peso.";
+}
+
 export function evaluar(input: EngineInput): Veredicto {
   const { giro, comp, actividadPercentil, pobrezaPct, riesgoPercentil } = input;
+  const rezago = isRezagoGrado(input.rezagoGrado) ? input.rezagoGrado : null;
 
   const saturacion = Math.min(100, (comp / giro.tolerancia) * 62);
   const gentePercentil = clamp(Math.round(actividadPercentil), 2, 98);
-  const poderNivel = nivelPoder(pobrezaPct);
+  const poderNivel =
+    rezago !== null ? REZAGO_NIVEL[rezago] : nivelPoder(pobrezaPct);
   const riesgo = nivelRiesgo(riesgoPercentil);
   const riesgoNivelBar =
     riesgoPercentil === null
@@ -177,8 +206,9 @@ export function evaluar(input: EngineInput): Veredicto {
     },
     poder: {
       nivel: poderNivel,
-      frase: frasePoder(pobrezaPct),
-      grain: "ciudad",
+      frase:
+        rezago !== null ? frasePoderNivel(poderNivel) : frasePoder(pobrezaPct),
+      grain: rezago !== null ? "zona" : "ciudad",
     },
     riesgo: {
       nivel: riesgoNivelBar,

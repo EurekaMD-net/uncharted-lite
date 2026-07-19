@@ -3,32 +3,50 @@
  *
  * Security stance (mirrors intelligence-ops-mcp: bounded tools, not open
  * access): the upstream X-Api-Key lives only here; only cooked endpoints
- * are exposed; the cascade is bounded to launched metros; verdicts cross
- * the wire, warehouse rows don't.
+ * are exposed; verdicts cross the wire, warehouse rows don't. Coverage is
+ * national — rate limits are the scrape gate.
  */
 import { Hono } from "hono";
 import { serveStatic } from "@hono/node-server/serve-static";
 import type { BffConfig } from "./config.js";
-import {
-  CVE_MUN_RE,
-  ENTIDAD_RE,
-  ESTADOS_ACTIVOS,
-  MUNICIPIOS_ACTIVOS,
-} from "./config.js";
+import { CVE_MUN_RE, ENTIDAD_RE } from "./config.js";
 import { GIROS, girosPublic } from "./giros.js";
-import { evaluar, percentil, type Veredicto } from "./engine.js";
+import { evaluar, isRezagoGrado, percentil, type Veredicto } from "./engine.js";
 import type { OpportunityColoniaRow, Upstream } from "./upstream.js";
 import { UpstreamError } from "./upstream.js";
 import { clientIp, LIMITS, RateLimiter } from "./rate-limit.js";
 
 /** Colonias with fewer establishments than this are statistical noise. */
 const MIN_ACTIVIDAD = 25;
+/**
+ * Small-town relief: when a municipio has NOTHING above the primary floor
+ * (rural pueblos), drop to this floor instead of serving an empty cascade —
+ * a tiendita in a pueblo is exactly a target user. Below 5 establishments a
+ * "competition" signal is meaningless, so that stays the hard minimum.
+ */
+const MIN_ACTIVIDAD_RURAL = 5;
+
+function conActividad<T>(rows: T[], actividad: (r: T) => number): T[] {
+  const primary = rows.filter((r) => actividad(r) >= MIN_ACTIVIDAD);
+  if (primary.length > 0) return primary;
+  return rows.filter((r) => actividad(r) >= MIN_ACTIVIDAD_RURAL);
+}
 const EXPLORE_TOP = 12;
+/** AGEBs below this population are non-residential noise (industrial, etc.). */
+const MIN_POBTOT_AGEB = 400;
+/** How many top-scored AGEBs we try to label before giving up on 12 zones. */
+const MAX_LABEL_LOOKUPS = 20;
+/** Fewer labeled AGEB zones than this → fall back to colonia-grain explore. */
+const MIN_AGEB_ZONES = 3;
 
 export interface ServerDeps {
   config: BffConfig;
   upstream: Upstream;
-  limiters?: { general: RateLimiter; verdict: RateLimiter };
+  limiters?: {
+    general: RateLimiter;
+    verdict: RateLimiter;
+    explore?: RateLimiter;
+  };
 }
 
 interface ColoniaKeyed extends OpportunityColoniaRow {
@@ -42,6 +60,7 @@ function normalizeColonia(raw: string): string {
 export function makeApp({ config, upstream, limiters }: ServerDeps): Hono {
   const general = limiters?.general ?? new RateLimiter(LIMITS.general);
   const verdict = limiters?.verdict ?? new RateLimiter(LIMITS.verdict);
+  const explore = limiters?.explore ?? new RateLimiter(LIMITS.explore);
   const app = new Hono();
 
   // Periodic prune so idle IPs don't accumulate. Unref'd: never keeps the
@@ -49,14 +68,18 @@ export function makeApp({ config, upstream, limiters }: ServerDeps): Hono {
   const pruneTimer = setInterval(() => {
     general.prune();
     verdict.prune();
+    explore.prune();
   }, 5 * 60_000);
   pruneTimer.unref?.();
 
   app.use("/api/*", async (c, next) => {
     const ip = clientIp(c.req.header("x-forwarded-for"));
-    const isVerdict =
-      c.req.path === "/api/verdict" || c.req.path === "/api/explore";
-    const limiter = isVerdict ? verdict : general;
+    const limiter =
+      c.req.path === "/api/explore"
+        ? explore
+        : c.req.path === "/api/verdict"
+          ? verdict
+          : general;
     if (!limiter.allow(ip)) {
       return c.json(
         { ok: false, error: "Demasiadas consultas. Espera un momento." },
@@ -92,13 +115,16 @@ export function makeApp({ config, upstream, limiters }: ServerDeps): Hono {
 
   app.get("/api/estados", async (c) => {
     const { entidades } = await upstream.entidades();
-    c.header("Cache-Control", "public, max-age=3600");
+    // 5 min, not 1h: activo flags gate the whole cascade client-side, and a
+    // stale hour kept browsers on the old single-metro coverage after the
+    // national open (observed 2026-07-19).
+    c.header("Cache-Control", "public, max-age=300");
     return c.json({
       ok: true,
       estados: entidades.map((e) => ({
         clave: e.clave,
         nombre: e.nombre,
-        activo: ESTADOS_ACTIVOS.has(e.clave),
+        activo: true,
       })),
     });
   });
@@ -108,19 +134,20 @@ export function makeApp({ config, upstream, limiters }: ServerDeps): Hono {
     if (!ENTIDAD_RE.test(estado)) {
       return c.json({ ok: false, error: "estado inválido" }, 400);
     }
-    // Cascade is bounded to launched estados — no warehouse fan-out.
-    if (!ESTADOS_ACTIVOS.has(estado)) {
-      return c.json({ ok: true, municipios: [], proximamente: true });
-    }
     const { municipios } = await upstream.municipios(estado);
     c.header("Cache-Control", "public, max-age=3600");
     return c.json({
       ok: true,
+      // Nameless rows are warehouse noise (e.g. cve 19999, DENUE's
+      // "municipio unspecified" bucket) — never a pickable place.
       municipios: municipios
+        .filter((m): m is typeof m & { municipio: string } =>
+          Boolean(m.municipio),
+        )
         .map((m) => ({
           cve: m.cve_mun,
           nombre: m.municipio,
-          activo: MUNICIPIOS_ACTIVOS.has(m.cve_mun),
+          activo: true,
         }))
         .sort((a, b) => a.nombre.localeCompare(b.nombre, "es")),
     });
@@ -131,37 +158,26 @@ export function makeApp({ config, upstream, limiters }: ServerDeps): Hono {
     if (!CVE_MUN_RE.test(municipio)) {
       return c.json({ ok: false, error: "municipio inválido" }, 400);
     }
-    if (!MUNICIPIOS_ACTIVOS.has(municipio)) {
-      return c.json({ ok: true, colonias: [], proximamente: true });
-    }
     const { colonias } = await upstream.colonias(municipio);
     c.header("Cache-Control", "public, max-age=3600");
     return c.json({
       ok: true,
-      colonias: colonias
-        .filter((col) => col.num_establecimientos >= MIN_ACTIVIDAD)
+      colonias: conActividad(colonias, (col) => col.num_establecimientos)
         .map((col) => col.colonia)
         .sort((a, b) => a.localeCompare(b, "es")),
     });
   });
 
-  interface VerdictContext {
-    rows: ColoniaKeyed[];
-    actividadValues: number[];
+  interface MuniContext {
     pobrezaPct: number | null;
     municipioNombre: string;
     riesgoPercentil: number | null;
   }
 
-  /** Shared data assembly for verdict + explore (all upstream calls cached). */
-  async function verdictContext(
-    giroId: string,
-    cveMun: string,
-  ): Promise<VerdictContext> {
-    const giro = GIROS[giroId]!;
+  /** Muni-grain context (poder + riesgo), both upstream calls cached. */
+  async function muniContext(cveMun: string): Promise<MuniContext> {
     const entidad = cveMun.slice(0, 2);
-    const [opp, munis, risk] = await Promise.all([
-      upstream.opportunityByColonia(cveMun, giro.scian),
+    const [munis, risk] = await Promise.all([
       upstream.municipios(entidad),
       upstream.riskSummary(entidad).catch((err) => {
         // Risk layer is optional context — a SESNSP outage must not take
@@ -170,11 +186,6 @@ export function makeApp({ config, upstream, limiters }: ServerDeps): Hono {
         return null;
       }),
     ]);
-
-    const rows: ColoniaKeyed[] = opp.colonias
-      .filter((r): r is ColoniaKeyed => !!r.colonia)
-      .filter((r) => r.total_estab >= MIN_ACTIVIDAD);
-    const actividadValues = rows.map((r) => r.total_estab);
 
     const muni = munis.municipios.find((m) => m.cve_mun === cveMun);
     const pobrezaPct = muni?.pobreza_pct ?? null;
@@ -193,29 +204,31 @@ export function makeApp({ config, upstream, limiters }: ServerDeps): Hono {
       }
     }
 
-    return {
-      rows,
-      actividadValues,
-      pobrezaPct,
-      municipioNombre,
-      riesgoPercentil,
-    };
+    return { pobrezaPct, municipioNombre, riesgoPercentil };
+  }
+
+  /** Colonia-grain rows (verdict + explore fallback). Cached upstream. */
+  async function coloniaRows(
+    giroId: string,
+    cveMun: string,
+  ): Promise<{ rows: ColoniaKeyed[]; actividadValues: number[] }> {
+    const giro = GIROS[giroId]!;
+    const opp = await upstream.opportunityByColonia(cveMun, giro.scian);
+    const rows: ColoniaKeyed[] = conActividad(
+      opp.colonias.filter((r): r is ColoniaKeyed => !!r.colonia),
+      (r) => r.total_estab,
+    );
+    return { rows, actividadValues: rows.map((r) => r.total_estab) };
   }
 
   function validateGiroMuni(
     giroId: string,
     municipio: string,
-  ): { ok: true } | { ok: false; error: string; status: 400 | 403 } {
+  ): { ok: true } | { ok: false; error: string; status: 400 } {
     if (!GIROS[giroId])
       return { ok: false, error: "giro inválido", status: 400 };
     if (!CVE_MUN_RE.test(municipio))
       return { ok: false, error: "municipio inválido", status: 400 };
-    if (!MUNICIPIOS_ACTIVOS.has(municipio))
-      return {
-        ok: false,
-        error: "Esta ciudad aún no está disponible — próximamente.",
-        status: 403,
-      };
     return { ok: true };
   }
 
@@ -228,8 +241,11 @@ export function makeApp({ config, upstream, limiters }: ServerDeps): Hono {
     if (!colonia) return c.json({ ok: false, error: "colonia requerida" }, 400);
 
     const giro = GIROS[giroId]!;
-    const ctx = await verdictContext(giroId, municipio);
-    const row = ctx.rows.find((r) => normalizeColonia(r.colonia) === colonia);
+    const [ctx, { rows, actividadValues }] = await Promise.all([
+      muniContext(municipio),
+      coloniaRows(giroId, municipio),
+    ]);
+    const row = rows.find((r) => normalizeColonia(r.colonia) === colonia);
     if (!row) {
       return c.json(
         {
@@ -244,7 +260,7 @@ export function makeApp({ config, upstream, limiters }: ServerDeps): Hono {
     const veredicto: Veredicto = evaluar({
       giro,
       comp: row.target_count,
-      actividadPercentil: percentil(row.total_estab, ctx.actividadValues),
+      actividadPercentil: percentil(row.total_estab, actividadValues),
       pobrezaPct: ctx.pobrezaPct,
       riesgoPercentil: ctx.riesgoPercentil,
     });
@@ -274,41 +290,39 @@ export function makeApp({ config, upstream, limiters }: ServerDeps): Hono {
     if (!gate.ok) return c.json({ ok: false, error: gate.error }, gate.status);
 
     const giro = GIROS[giroId]!;
-    const ctx = await verdictContext(giroId, municipio);
-    const zonas = ctx.rows
-      .map((row) => {
-        const v = evaluar({
-          giro,
-          comp: row.target_count,
-          actividadPercentil: percentil(row.total_estab, ctx.actividadValues),
-          pobrezaPct: ctx.pobrezaPct,
-          riesgoPercentil: ctx.riesgoPercentil,
-        });
-        return {
-          colonia: row.colonia,
-          score: v.score,
-          luz: v.luz,
-          palabra: v.palabra,
-          comp: row.target_count,
-          campoLibre: v.campoLibre,
-          gente:
-            v.gente.nivel >= 66
-              ? "alta"
-              : v.gente.nivel >= 33
-                ? "media"
-                : "baja",
-          // 66/33 bands — must match engine nivelRiesgo so the explore chip
-          // and the verdict card never contradict on identical muni data.
-          riesgo:
-            v.riesgo.nivel >= 66
-              ? "bajo"
-              : v.riesgo.nivel >= 33
-                ? "medio"
-                : "alto",
-        };
-      })
-      .sort((a, b) => b.score - a.score)
-      .slice(0, EXPLORE_TOP);
+    const ctx = await muniContext(municipio);
+
+    // AGEB-first: real population per competitor + zone-grain rezago. The
+    // cvegeo never crosses the wire — zones are labeled with colonia names
+    // (zero jargon). Falls back to colonia-grain when the muni's AGEBs are
+    // too few/unlabeled (small rural municipios). The colonia dataset is
+    // only fetched on that fallback path (audit: no wasted upstream call).
+    const agebZonas = await exploreAgebZonas(giro.id, municipio, ctx).catch(
+      (err) => {
+        console.error(`[bff] AGEB explore failed, colonia fallback: ${err}`);
+        return null;
+      },
+    );
+
+    let zonas: ZonaOut[];
+    if (agebZonas && agebZonas.length >= MIN_AGEB_ZONES) {
+      zonas = agebZonas;
+    } else {
+      const { rows, actividadValues } = await coloniaRows(giroId, municipio);
+      zonas = rows
+        .map((row) => {
+          const v = evaluar({
+            giro,
+            comp: row.target_count,
+            actividadPercentil: percentil(row.total_estab, actividadValues),
+            pobrezaPct: ctx.pobrezaPct,
+            riesgoPercentil: ctx.riesgoPercentil,
+          });
+          return toZona(v, row.colonia, row.target_count, null);
+        })
+        .sort((a, b) => b.score - a.score)
+        .slice(0, EXPLORE_TOP);
+    }
 
     c.header("Cache-Control", "public, max-age=300");
     return c.json({
@@ -317,6 +331,147 @@ export function makeApp({ config, upstream, limiters }: ServerDeps): Hono {
       zonas,
     });
   });
+
+  interface ZonaOut {
+    colonia: string;
+    habitantes: number | null;
+    score: number;
+    luz: Veredicto["luz"];
+    palabra: string;
+    comp: number;
+    campoLibre: boolean;
+    gente: "alta" | "media" | "baja";
+    riesgo: "bajo" | "medio" | "alto";
+  }
+
+  function toZona(
+    v: Veredicto,
+    colonia: string,
+    comp: number,
+    habitantes: number | null,
+  ): ZonaOut {
+    return {
+      colonia,
+      habitantes,
+      score: v.score,
+      luz: v.luz,
+      palabra: v.palabra,
+      comp,
+      campoLibre: v.campoLibre,
+      gente:
+        v.gente.nivel >= 66 ? "alta" : v.gente.nivel >= 33 ? "media" : "baja",
+      // 66/33 bands — same cut points as engine nivelRiesgo so the RIESGO
+      // chip never contradicts the verdict card (both are muni-grain). The
+      // overall score/luz can still differ between Explore (AGEB aggregate)
+      // and Validate (whole colonia) — that grain gap is documented.
+      riesgo:
+        v.riesgo.nivel >= 66 ? "bajo" : v.riesgo.nivel >= 33 ? "medio" : "alto",
+    };
+  }
+
+  async function exploreAgebZonas(
+    giroId: string,
+    cveMun: string,
+    ctx: { pobrezaPct: number | null; riesgoPercentil: number | null },
+  ): Promise<ZonaOut[]> {
+    const giro = GIROS[giroId]!;
+    const { agebs } = await upstream.opportunityByAgeb(cveMun, giro.scian);
+    const rows = agebs.filter(
+      (a) => a.pobtot !== null && a.pobtot >= MIN_POBTOT_AGEB,
+    );
+    if (rows.length === 0) return [];
+
+    const pobValues = rows.map((a) => a.pobtot!);
+    // Provisional per-AGEB scores only pick WHICH AGEBs to label — the
+    // published zone score is computed on the label-level aggregate below.
+    const scored = rows
+      .map((a) => ({
+        ageb: a,
+        provisional: evaluar({
+          giro,
+          comp: a.target_count,
+          actividadPercentil: percentil(a.pobtot!, pobValues),
+          pobrezaPct: ctx.pobrezaPct,
+          riesgoPercentil: ctx.riesgoPercentil,
+          rezagoGrado: isRezagoGrado(a.rezago_grado) ? a.rezago_grado : null,
+        }).score,
+      }))
+      .sort((a, b) => b.provisional - a.provisional);
+
+    // Label lookups happen in two batches (audit: fan-out budget). The
+    // typical request labels EXPLORE_TOP AGEBs; the second batch only runs
+    // when dedupe/unlabeled rows leave fewer than EXPLORE_TOP zones.
+    const fetchLabels = (batch: typeof scored) =>
+      Promise.all(
+        batch.map(({ ageb }) =>
+          upstream
+            .coloniasByAgeb(ageb.cvegeo)
+            .then((r) => r.colonias[0]?.colonia ?? null)
+            .catch(() => null),
+        ),
+      );
+    const firstBatch = scored.slice(0, EXPLORE_TOP);
+    let labeled = firstBatch.map((s, i) => ({ ...s, i }));
+    let labels = await fetchLabels(firstBatch);
+    const uniqueLabels = new Set(labels.filter(Boolean));
+    if (uniqueLabels.size < EXPLORE_TOP) {
+      const second = scored.slice(EXPLORE_TOP, MAX_LABEL_LOOKUPS);
+      const secondLabels = await fetchLabels(second);
+      labeled = labeled.concat(
+        second.map((s, i) => ({ ...s, i: EXPLORE_TOP + i })),
+      );
+      labels = labels.concat(secondLabels);
+    }
+
+    // Aggregate per colonia label BEFORE scoring (audit: keeping only the
+    // best single AGEB per label was one-directionally optimistic vs the
+    // colonia-wide verdict the user lands on when they tap through).
+    // Aggregate = the colonia's populous AGEBs among the candidates:
+    // competitors and population sum; rezago comes from the largest AGEB.
+    interface Agg {
+      comp: number;
+      pobtot: number;
+      rezagoOfLargest: string | null;
+      largestPob: number;
+    }
+    const porLabel = new Map<string, Agg>();
+    for (let i = 0; i < labeled.length; i++) {
+      const label = labels[i];
+      if (!label) continue;
+      const a = labeled[i]!.ageb;
+      const agg = porLabel.get(label) ?? {
+        comp: 0,
+        pobtot: 0,
+        rezagoOfLargest: null,
+        largestPob: -1,
+      };
+      agg.comp += a.target_count;
+      agg.pobtot += a.pobtot!;
+      if (a.pobtot! > agg.largestPob) {
+        agg.largestPob = a.pobtot!;
+        agg.rezagoOfLargest = a.rezago_grado;
+      }
+      porLabel.set(label, agg);
+    }
+
+    const zonas: ZonaOut[] = [];
+    for (const [label, agg] of porLabel) {
+      const v = evaluar({
+        giro,
+        comp: agg.comp,
+        actividadPercentil: percentil(agg.pobtot, pobValues),
+        pobrezaPct: ctx.pobrezaPct,
+        riesgoPercentil: ctx.riesgoPercentil,
+        rezagoGrado: isRezagoGrado(agg.rezagoOfLargest)
+          ? agg.rezagoOfLargest
+          : null,
+      });
+      zonas.push(
+        toZona(v, label, agg.comp, Math.round(agg.pobtot / 100) * 100),
+      );
+    }
+    return zonas.sort((a, b) => b.score - a.score).slice(0, EXPLORE_TOP);
+  }
 
   // Unknown /api/* paths are JSON 404s — they must never fall through to
   // the SPA and hand the client HTML with a 200.
