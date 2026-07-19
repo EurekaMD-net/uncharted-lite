@@ -255,29 +255,69 @@ export function makeApp({
     if (!colonia) return c.json({ ok: false, error: "colonia requerida" }, 400);
 
     const giro = GIROS[giroId]!;
-    const [ctx, { rows, actividadValues }] = await Promise.all([
-      muniContext(municipio),
-      coloniaRows(giroId, municipio),
-    ]);
-    const row = rows.find((r) => normalizeColonia(r.colonia) === colonia);
-    if (!row) {
-      return c.json(
-        {
-          ok: false,
-          error:
-            "No tenemos suficiente actividad registrada en esa colonia para darte un veredicto honesto.",
-        },
-        404,
-      );
+    const ctx = await muniContext(municipio);
+
+    // Same-source rule: a zone Explore showed must validate to the IDENTICAL
+    // score. Score from the same AGEB aggregate Explore builds for the label
+    // whenever one exists (observed 2026-07-19: FUENTES DE TEPEPAN ranked
+    // verde 76 in Explore, then flipped to roja 40 here because every factor
+    // came from a different source at colonia grain).
+    const aggs = await agebAggregates(giroId, municipio, ctx).catch((err) => {
+      console.error(`[bff] AGEB aggregates failed, colonia verdict: ${err}`);
+      return null;
+    });
+    let hit: { label: string; agg: LabelAgg } | null = null;
+    // Same MIN_AGEB_ZONES gate as Explore: when Explore would have fallen
+    // back to colonia grain, this verdict must too — never mix the paths.
+    if (aggs && aggs.porLabel.size >= MIN_AGEB_ZONES) {
+      for (const [label, agg] of aggs.porLabel) {
+        if (normalizeColonia(label) === colonia) {
+          hit = { label, agg };
+          break;
+        }
+      }
     }
 
-    const veredicto: Veredicto = evaluar({
-      giro,
-      comp: row.target_count,
-      actividadPercentil: percentil(row.total_estab, actividadValues),
-      pobrezaPct: ctx.pobrezaPct,
-      riesgoPercentil: ctx.riesgoPercentil,
-    });
+    let lugarColonia: string;
+    let grano: "zona" | "colonia";
+    let veredicto: Veredicto;
+    if (hit) {
+      lugarColonia = hit.label;
+      grano = "zona";
+      veredicto = evaluar({
+        giro,
+        comp: hit.agg.comp,
+        actividadPercentil: percentil(hit.agg.pobtot, aggs!.pobValues),
+        pobrezaPct: ctx.pobrezaPct,
+        riesgoPercentil: ctx.riesgoPercentil,
+        rezagoGrado: isRezagoGrado(hit.agg.rezagoOfLargest)
+          ? hit.agg.rezagoOfLargest
+          : null,
+        competenciaGrain: "zona",
+      });
+    } else {
+      const { rows, actividadValues } = await coloniaRows(giroId, municipio);
+      const row = rows.find((r) => normalizeColonia(r.colonia) === colonia);
+      if (!row) {
+        return c.json(
+          {
+            ok: false,
+            error:
+              "No tenemos suficiente actividad registrada en esa colonia para darte un veredicto honesto.",
+          },
+          404,
+        );
+      }
+      lugarColonia = row.colonia;
+      grano = "colonia";
+      veredicto = evaluar({
+        giro,
+        comp: row.target_count,
+        actividadPercentil: percentil(row.total_estab, actividadValues),
+        pobrezaPct: ctx.pobrezaPct,
+        riesgoPercentil: ctx.riesgoPercentil,
+      });
+    }
 
     c.header("Cache-Control", "public, max-age=300");
     return c.json({
@@ -291,7 +331,8 @@ export function makeApp({
       lugar: {
         municipio,
         municipioNombre: ctx.municipioNombre,
-        colonia: row.colonia,
+        colonia: lugarColonia,
+        grano,
       },
       veredicto,
     });
@@ -551,17 +592,37 @@ export function makeApp({
     };
   }
 
-  async function exploreAgebZonas(
+  interface LabelAgg {
+    comp: number;
+    pobtot: number;
+    rezagoOfLargest: string | null;
+    largestPob: number;
+  }
+
+  interface AgebAggregates {
+    porLabel: Map<string, LabelAgg>;
+    pobValues: number[];
+  }
+
+  /**
+   * Label→aggregate map over a muni's populous AGEBs — the SINGLE scoring
+   * source for both Explore's zone cards and /api/verdict on a labeled
+   * colonia. One computation, two consumers: that identity is what keeps an
+   * Explore "Va" from flipping at the paid moment. Cold cost ≈ 1 + ≤20
+   * upstream calls (same budget class as Explore); everything is cached 1h
+   * upstream-side, so re-deriving it here is free when warm.
+   */
+  async function agebAggregates(
     giroId: string,
     cveMun: string,
     ctx: { pobrezaPct: number | null; riesgoPercentil: number | null },
-  ): Promise<ZonaOut[]> {
+  ): Promise<AgebAggregates | null> {
     const giro = GIROS[giroId]!;
     const { agebs } = await upstream.opportunityByAgeb(cveMun, giro.scian);
     const rows = agebs.filter(
       (a) => a.pobtot !== null && a.pobtot >= MIN_POBTOT_AGEB,
     );
-    if (rows.length === 0) return [];
+    if (rows.length === 0) return null;
 
     const pobValues = rows.map((a) => a.pobtot!);
     // Provisional per-AGEB scores only pick WHICH AGEBs to label — the
@@ -610,13 +671,7 @@ export function makeApp({
     // colonia-wide verdict the user lands on when they tap through).
     // Aggregate = the colonia's populous AGEBs among the candidates:
     // competitors and population sum; rezago comes from the largest AGEB.
-    interface Agg {
-      comp: number;
-      pobtot: number;
-      rezagoOfLargest: string | null;
-      largestPob: number;
-    }
-    const porLabel = new Map<string, Agg>();
+    const porLabel = new Map<string, LabelAgg>();
     for (let i = 0; i < labeled.length; i++) {
       const label = labels[i];
       if (!label) continue;
@@ -636,12 +691,24 @@ export function makeApp({
       porLabel.set(label, agg);
     }
 
+    return { porLabel, pobValues };
+  }
+
+  async function exploreAgebZonas(
+    giroId: string,
+    cveMun: string,
+    ctx: { pobrezaPct: number | null; riesgoPercentil: number | null },
+  ): Promise<ZonaOut[]> {
+    const giro = GIROS[giroId]!;
+    const aggs = await agebAggregates(giroId, cveMun, ctx);
+    if (!aggs) return [];
+
     const zonas: ZonaOut[] = [];
-    for (const [label, agg] of porLabel) {
+    for (const [label, agg] of aggs.porLabel) {
       const v = evaluar({
         giro,
         comp: agg.comp,
-        actividadPercentil: percentil(agg.pobtot, pobValues),
+        actividadPercentil: percentil(agg.pobtot, aggs.pobValues),
         pobrezaPct: ctx.pobrezaPct,
         riesgoPercentil: ctx.riesgoPercentil,
         rezagoGrado: isRezagoGrado(agg.rezagoOfLargest)

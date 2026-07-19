@@ -304,6 +304,7 @@ describe("GET /api/verdict", () => {
       municipio: "14039",
       municipioNombre: "Guadalajara",
       colonia: "AMERICANA",
+      grano: "zona", // AMERICANA is an Explore-labeled zone → same-source verdict
     });
     expect(body.veredicto.palabra).toMatch(/Va|Aguas|Mejor no/);
     for (const f of ["competencia", "gente", "poder", "riesgo"] as const) {
@@ -345,12 +346,63 @@ describe("GET /api/verdict", () => {
       upstream.opportunityByColonia as ReturnType<typeof vi.fn>
     ).mockRejectedValue(new UpstreamError("down", 500));
     const { app } = makeTestApp(upstream);
+    // CENTRO is not an AGEB label → colonia-grain path → upstream failure
     const res = await app.request(
-      "/api/verdict?giro=farmacia&municipio=14039&colonia=AMERICANA",
+      "/api/verdict?giro=farmacia&municipio=14039&colonia=CENTRO",
     );
     expect(res.status).toBe(502);
     const body = await res.json();
     expect(body.error).toMatch(/no están disponibles/);
+  });
+
+  it("matches the Explore zone score exactly for an Explore-listed label", async () => {
+    // The 2026-07-19 contradiction: Explore ranked a zone verde 76, Validate
+    // flipped it to roja 40 — every factor came from a different source.
+    // Same-source rule: both must score from the same AGEB aggregate.
+    const { app } = makeTestApp();
+    const exploreBody = await (
+      await app.request("/api/explore?giro=farmacia&municipio=14039")
+    ).json();
+    const zona = exploreBody.zonas.find(
+      (z: { colonia: string }) => z.colonia === "AMERICANA",
+    );
+    const verdictBody = await (
+      await app.request(
+        "/api/verdict?giro=farmacia&municipio=14039&colonia=AMERICANA",
+      )
+    ).json();
+    expect(verdictBody.veredicto.score).toBe(zona.score);
+    expect(verdictBody.veredicto.luz).toBe(zona.luz);
+    expect(verdictBody.lugar.grano).toBe("zona");
+    // zone-grain inputs surfaced honestly: competencia + poder labeled zona
+    expect(verdictBody.veredicto.competencia.grain).toBe("zona");
+    expect(verdictBody.veredicto.poder.grain).toBe("zona");
+  });
+
+  it("keeps the colonia-grain verdict (grano colonia) for non-Explore labels", async () => {
+    const { app } = makeTestApp();
+    const body = await (
+      await app.request(
+        "/api/verdict?giro=farmacia&municipio=14039&colonia=CENTRO",
+      )
+    ).json();
+    expect(body.ok).toBe(true);
+    expect(body.lugar.grano).toBe("colonia");
+    expect(body.veredicto.competencia.grain).toBe("colonia");
+  });
+
+  it("degrades to the colonia-grain verdict when the AGEB path fails", async () => {
+    const upstream = makeUpstreamMock();
+    (upstream.opportunityByAgeb as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new UpstreamError("down", 500),
+    );
+    const { app } = makeTestApp(upstream);
+    const res = await app.request(
+      "/api/verdict?giro=farmacia&municipio=14039&colonia=AMERICANA",
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.lugar.grano).toBe("colonia");
   });
 });
 

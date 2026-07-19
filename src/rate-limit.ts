@@ -11,9 +11,12 @@ export interface RateLimitConfig {
 
 export const LIMITS = {
   general: { windowMs: 60_000, max: 30 },
-  verdict: { windowMs: 60_000, max: 10 },
-  // Explore fans out to AGEB label lookups upstream (up to ~23 calls on a
-  // cold municipio), so its budget is tighter than verdict's.
+  // Verdict and Explore share the tight budget: both fan out to AGEB label
+  // lookups upstream (up to ~24 calls on a cold municipio) since verdict
+  // scores from the same AGEB aggregate Explore builds (same-source rule).
+  // Warm-muni repeats are ~free (1h upstream cache) — the budget guards
+  // against cold-municipio enumeration across the ~2,400-muni surface.
+  verdict: { windowMs: 60_000, max: 6 },
   explore: { windowMs: 60_000, max: 6 },
 } as const satisfies Record<string, RateLimitConfig>;
 

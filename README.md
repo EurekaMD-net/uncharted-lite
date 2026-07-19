@@ -29,7 +29,7 @@ browser ── https ── Caddy (lite-demo.…nip.io, overwrites X-Forwarded-F
         BFF  (Hono, 127.0.0.1:8096, tsx)          ← this repo, src/
         · holds the upstream X-Api-Key (.env — never reaches the client)
         · exposes ONLY cooked endpoints, serves the built SPA
-        · per-IP rate limits: 30/min general, 10/min verdict, 6/min explore
+        · per-IP rate limits: 30/min general, 6/min verdict, 6/min explore
         · semáforo thresholds + verdict engine live here, server-side
               │                          │
               ▼                          ▼
@@ -58,7 +58,7 @@ cold municipio, cached 1h).
 | `GET /api/estados`           | —                              | all 32 states, all active                                                                                                                                                                               |
 | `GET /api/municipios`        | `estado`                       | every municipio of the estado (nameless noise rows dropped)                                                                                                                                             |
 | `GET /api/colonias`          | `municipio`                    | colonia names (top 200 by activity; small-town relief floor for rural munis)                                                                                                                            |
-| `GET /api/verdict`           | `giro, municipio, colonia`     | semáforo + 4 factors + recommendation (colonia grain)                                                                                                                                                   |
+| `GET /api/verdict`           | `giro, municipio, colonia`     | semáforo + 4 factors + recommendation. **Same-source rule:** when the colonia is an Explore-labeled zone, scores from the identical AGEB aggregate (`grano: "zona"`); colonia-grain fallback otherwise  |
 | `GET /api/explore`           | `giro, municipio`              | top 12 zones — AGEB grain aggregated per colonia label, with `habitantes`; colonia-grain fallback for rural munis                                                                                       |
 | `GET /api/verdict-direccion` | `giro, direccion[, municipio]` | address → Nominatim → `/resolve/ageb` → **zone-grain** verdict (AGEB competencia + rezago poder); colonia-grain fallback; distinct honest errors for no-geocode / no-AGEB / no-activity / geocoder-busy |
 
@@ -130,12 +130,16 @@ Dev: `npm run dev` (BFF) + `cd web && npm run dev` (Vite on 5173, proxies `/api`
 - **Paywall is client-side only.** The full report crosses the wire on
   `/api/verdict`; DevTools reveals it. Server-side gating arrives with
   payments (out of scope this pass) — the endpoint split is ready for it.
-- **Explore vs Validate-by-colonia grain gap.** Explore scores a colonia
-  label from the aggregate of its populous AGEBs; Validate-by-colonia scores
-  the whole colonia from DENUE activity + muni-grain poder. Both readings
-  are true at their grain. **Validate-by-address closes the gap**: it lands
-  on the exact AGEB (zone-grain competencia + rezago poder, labeled
-  "grano: zona"). Riesgo is muni-grain everywhere.
+- **Explore vs Validate grain gap — CLOSED 2026-07-19 (same-source rule).**
+  Observed in prod: Explore ranked FUENTES DE TEPEPAN (Tlalpan) verde 76,
+  Validate flipped it to roja 40 — every factor came from a different
+  source (geometric vs text-matched competencia, population vs activity
+  percentile, zone rezago vs muni pobreza). Now `/api/verdict` scores from
+  the **identical AGEB aggregate** Explore builds for the label (pinned by
+  a score-equality test), falling back to colonia grain — `grano` in the
+  response says which — only for colonias Explore never labeled, where no
+  visible contradiction is possible. **Validate-by-address** lands on the
+  exact AGEB instead. Riesgo is muni-grain everywhere.
 - **Explore's AGEB view covers a muni's top-100 AGEBs by population** —
   upstream's per-request cap. Smaller zones surface via the colonia
   fallback and Validate.
