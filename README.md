@@ -144,21 +144,26 @@ Dev: `npm run dev` (BFF) + `cd web && npm run dev` (Vite on 5173, proxies `/api`
   pickers populated in all 8 sampled metros (68–200 entries), Explore
   returned 12 AGEB-grain zones in all 4 sampled cities.
 
-## Phase 2 backend dependency: `/resolve/ageb`
+## Phase 2 backend dependency: `/resolve/ageb` — ✅ SHIPPED 2026-07-19
 
-Free-text address validation needs a new endpoint on
-`eurekamd-denue-analysis`:
+Live on `eurekamd-denue-analysis` (commit `047c848`), authenticated like every
+other upstream route:
 
 ```
-GET /resolve/ageb?lat=&lon=
-→ ST_Contains point-in-polygon against ageb_polygons (81,451 polygons)
-→ { cvegeo, ambito, cve_mun }
+GET /resolve/ageb?lat=&lon=          (X-Api-Key)
+→ ST_Contains point-in-polygon against ageb_polygons (81,451 polygons, GIST)
+→ { lat, lon, cvegeo, ambito: "Urbana"|"Rural", cve_mun }
+→ 400 outside Mexico's bbox · 404 resolve.no_ageb when no polygon contains
+  the point · Cache-Control 24h
 ```
 
-Colonia is a free-text label in DENUE (no geometry) — fine for menus, unusable
-for point-in-polygon. Address resolution must land on AGEB. Geocoder pick:
-self-hosted Nominatim with a Mexico OSM extract (≈$0/call); Google Geocoding
-($5/1k) only as a paid-flow fallback if accuracy demands it.
+Verified live: Ángel de la Independencia → `0901500010930` / `09015` (145ms);
+a Chapalita point correctly lands in `14120` (Zapopan side of the border).
+
+What remains for Phase 2 is the **geocoder** in front of it: self-hosted
+Nominatim with a Mexico OSM extract (≈$0/call); Google Geocoding ($5/1k) only
+as a paid-flow fallback if accuracy demands it. Then Validate resolves
+addresses → AGEB and the Explore/Validate grain gap closes.
 
 ## Repo layout
 
